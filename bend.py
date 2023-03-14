@@ -87,29 +87,6 @@ class inferenceProcess(object):
         Y = -(1j*l)/ (2*complex_kl*torch.sqrt(complex_B *self.beam["massPerUnit"])) * N_l/D_l
         return abs(Y)
 
-    def errorEstimation(self, E):
-        Y_calc = self.mobilityFuncModel(E)
-        Y_calc_norm = (Y_calc - Y_calc.mean()) / Y_calc.std()
-        #error = abs(self.Y_exp_norm - Y_calc)
-        return Y_calc_norm
-        """
-        def model(self, Y_exp):
-            E_theo = 10e10 # theoreticall Young's modulus of brass
-            # define the hyperparameters that control the Beta prior
-            alpha = torch.tensor(E_theo) # E normalized
-            beta = torch.tensor(3.)
-            E = pyro.sample("E", dist.Normal(alpha, beta))
-            #error = pyro.sample("error", dist.Normal(error_value, 3.))
-            E = pyro.sample("E", dist.Normal(E_theo, 1.))
-            with pyro.plate("data", len(Y_exp)):
-                Y = pyro.sample("Y_est", dist.Normal(self.errorEstimation(E), 1.))#, obs=abs(self.Y_exp_norm))
-        """
-    def model(self, freq, Y_exp):
-        E = pyro.sample("E",dist.Normal(1, 3.))
-        with pyro.plate("data", len(Y_exp)):
-            y = pyro.sample("y", pyro.distributions.Normal(self.errorEstimation(E*10e10), 1.), obs=Y_exp)
-        return y
-
     def model_YoungDamping(self, x, y_obs):
         # Damping loss factor definition
         eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
@@ -132,24 +109,37 @@ class inferenceProcess(object):
             y_values = self.normalize(self.mobilityFuncModel(E*10e10, x))
             y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
         return y
+    
+    def Model_Damping(self, x, y_obs):
+        eta_mean = pyro.param("eta_mean", dist.Normal(1, 3))
+        eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
+        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
+        with pyro.plate("data", y_obs.shape[1]):
+            y_values = self.mobilityFuncModel(0.993, x, eta=eta*0.01)
+            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
+        return y
 
 
-    def train(self, lr=0.01, n_steps=2000):
+    def train(self):
         pyro.clear_param_store()
-        y_obs = self.Y_exp # Suppose this was the vector of observed y's
-        input_x = self.freq
-        pyro.render_model(self.Model_Young, model_args=(input_x, self.normalize(y_obs)), render_distributions=True)
+        y_obs = self.Y_exp#[:, 0:2000] # Suppose this was the vector of observed y's
+        input_x = self.freq#[0:2000]
+        pyro.render_model(self.Model_Young, model_args=(input_x, y_obs), render_distributions=True)
         
         nuts_kernel = NUTS(self.Model_Young)
-        mcmc = MCMC(nuts_kernel, num_samples=len(self.freq), warmup_steps=500, num_chains=1)        
-        mcmc.run(input_x, self.normalize(y_obs))
+        mcmc = MCMC(nuts_kernel, num_samples=len(input_x), warmup_steps=500, num_chains=1)        
+        mcmc.run(input_x, y_obs)
 
         # Show summary of inference results
         mcmc.summary()
         posterior_samples = mcmc.get_samples()
         
         sns.displot(posterior_samples["E"]*10e10)
-        plt.xlabel("E values")
+        plt.xlabel("Young's modulus values")
+        plt.show()
+                
+        sns.displot(posterior_samples["eta"]*10e10)
+        plt.xlabel("damping loss factor values")
         plt.show()
         return
 
