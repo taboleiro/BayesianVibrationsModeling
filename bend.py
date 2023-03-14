@@ -37,6 +37,10 @@ class inferenceProcess(object):
         beam["I"] = beam["width"]*beam["thickness"]**3/12
         return beam
 
+    def normalize(self, x):
+        x = (x - x.mean()) / x.std()
+        return x
+
     def run(self):
         self.beam = self.beamProperties()
 
@@ -45,13 +49,13 @@ class inferenceProcess(object):
         files = ["centerFreqResponse", "center2FreqResponse", "randomFreqResponse"]
         self.Y_exp = []
         for file in files:
-            experiment = pd.read_csv("./Data/bend/"+file+".csv")[20:]
+            experiment = pd.read_csv("./BayesianVibrationsModeling/Data/bend/"+file+".csv")[20:]
             # Mobility value calculated from input data and converted to torch
             mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
-            self.Y_exp.append(mobility)
+            self.Y_exp.append(abs(mobility))
             #self.Y_exp_norm = (self.Y_exp - self.Y_exp.mean()) / self.Y_exp.std() # Normalization
             self.freq = torch.tensor(experiment["freq"].values) # Freq values(x axis) converted to torch
-        self.Y_exp = pd.read_csv("./Data/bend/"+file+".csv")[20:]
+        #self.Y_exp = pd.read_csv("./BayesianVibrationsModeling/Data/bend/"+file+".csv")[20:]
         self.Y_exp = torch.tensor(self.Y_exp)
         self.train()
         #map_estimate = pyro.param("E").item()
@@ -67,42 +71,20 @@ class inferenceProcess(object):
         Output: 
             Y   : Mobility value
         """
-        # C
-        """
-        beam = self.beam
-        l = beam["length"]/2
-
-        # calculating the bending wave number
-        w = 2*np.pi*freq # Angular frequency
-        B = E*beam["I"] #
-        complex_B = E*(1+1j*eta)*beam["I"]
-        cb = torch.sqrt(w)*(B/beam["massPerUnit"])**(1/4) # bending wave velocity
-        
-        kl = w/cb*l # bending wave number
-        complex_kl = kl*(1-1j*eta/4)
-        
-        N_l = torch.cos(complex_kl)*torch.cosh(complex_kl) + 1
-        D_l = torch.cos(complex_kl)*torch.sinh(complex_kl) + torch.sin(complex_kl)*torch.cosh(complex_kl)
-
-        #Y = -(0.25*eta+1j)*l/(2*kl*np.sqrt(B*beam["massPerUnit"])) * N_l/D_l
-        # The mobility is a complex value but just the absolute value is shown 
-        Y = abs(-1j*l/ (2*complex_kl*torch.sqrt(complex_B*beam["massPerUnit"])) * N_l/D_l)
-        """
-        beam = self.beam
-        l = beam["length"]/2
+        l = self.beam["length"]/2
 
         # calculating the bending wave number
         w = 2*torch.pi*freq # Angular frequency
-        B = E*beam["I"] #
-        complex_B = E*(1+1j*eta)*beam["I"]
-        cb = torch.sqrt(w)*(B/beam["massPerUnit"])**(1/4) # bending wave velocity
+        B = E*self.beam["I"] #
+        complex_B = E*(1+1j*eta)*self.beam["I"]
+        cb = torch.sqrt(w)*(B/self.beam["massPerUnit"])**(1/4) # bending wave velocity
         
         kl = w/(cb)*l # bending wave number
         complex_kl = kl*(1-1j*eta/4)
-        N_l = torch.cos(kl)*torch.cosh(kl) + 1
-        D_l = torch.cos(kl)*torch.sinh(kl) + torch.sin(kl)*torch.cosh(kl)
+        N_l = torch.cos(complex_kl)*torch.cosh(complex_kl) + 1
+        D_l = torch.cos(complex_kl)*torch.sinh(complex_kl) + torch.sin(complex_kl)*torch.cosh(complex_kl)
 
-        Y = -(1j*l)/ (2*complex_kl*l*torch.sqrt(complex_B*beam["massPerUnit"])) * N_l/D_l
+        Y = -(1j*l)/ (2*complex_kl*torch.sqrt(complex_B *self.beam["massPerUnit"])) * N_l/D_l
         return abs(Y)
 
     def errorEstimation(self, E):
@@ -128,18 +110,27 @@ class inferenceProcess(object):
             y = pyro.sample("y", pyro.distributions.Normal(self.errorEstimation(E*10e10), 1.), obs=Y_exp)
         return y
 
-    def my_model(self, x, y_obs):
-        beta = pyro.sample("beta", pyro.distributions.Normal(0., 1.))
-        with pyro.plate("data", len(y_obs)):
-            y = pyro.sample("y", pyro.distributions.Normal(beta*x, 1.), obs=y_obs)
-        return y
-
-    def my_model_Y(self, x, y_obs):
+    def model_YoungDamping(self, x, y_obs):
+        # Damping loss factor definition
+        eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
+        eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
+        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
+        # Young's modulus definition
         E_mean = pyro.param("E_mean", dist.Normal(1, 3.))
         E_var = pyro.param("E_var", dist.Cauchy(1., 0.))
         E = pyro.sample("E", dist.Normal(E_mean, E_var))
         with pyro.plate("data", y_obs.shape[1]):
-            y = pyro.sample("y", dist.Normal(self.mobilityFuncModel(E*10e10, x), 1.), obs=y_obs)
+            y_values = self.normalize(self.mobilityFuncModel(E*10e10, x, eta=eta*0.01))
+            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
+        return y
+
+    def Model_Young(self, x, y_obs):
+        E_mean = pyro.param("E_mean", dist.Normal(1, 3.))
+        E_var = pyro.param("E_var", dist.Cauchy(1., 0.))
+        E = pyro.sample("E", dist.Normal(E_mean, E_var))
+        with pyro.plate("data", y_obs.shape[1]):
+            y_values = self.normalize(self.mobilityFuncModel(E*10e10, x))
+            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
         return y
 
 
@@ -147,16 +138,11 @@ class inferenceProcess(object):
         pyro.clear_param_store()
         y_obs = self.Y_exp # Suppose this was the vector of observed y's
         input_x = self.freq
-        pyro.render_model(self.my_model_Y, model_args=(input_x, y_obs), render_distributions=True)
-        #sampled_y = self.my_model(input_x)
-        #nuts_kernel = NUTS(model, jit_compile=args.jit)
-        #mcmc = MCMC()
-        # Run inference in Pyro
+        pyro.render_model(self.Model_Young, model_args=(input_x, self.normalize(y_obs)), render_distributions=True)
         
-        nuts_kernel = NUTS(self.my_model_Y)
-        mcmc = MCMC(nuts_kernel, num_samples=len(self.freq), warmup_steps=500, num_chains=1)
-        
-        mcmc.run(input_x, y_obs)
+        nuts_kernel = NUTS(self.Model_Young)
+        mcmc = MCMC(nuts_kernel, num_samples=len(self.freq), warmup_steps=500, num_chains=1)        
+        mcmc.run(input_x, self.normalize(y_obs))
 
         # Show summary of inference results
         mcmc.summary()
@@ -167,27 +153,6 @@ class inferenceProcess(object):
         plt.show()
         return
 
-    def train2(self, lr=0.01, n_steps=2000):
-        pyro.clear_param_store()
-        # nuts_kernel = NUTS(model, jit_compile=args.jit)
-        # mcmc = MCMC()
-        # Run inference in Pyro
-        """
-        nuts_kernel = NUTS(self.model)
-        mcmc = MCMC(nuts_kernel, num_samples=1000, warmup_steps=500, num_chains=1)
-        mcmc.run(self.freq, self.Y_exp)
-
-        # Show summary of inference results
-        mcmc.summary()
-        """
-        adam_params = {"lr": lr}
-        adam = pyro.optim.Adam(adam_params)
-        svi = SVI(self.model, adam, loss=Trace_ELBO())
-        for step in range(n_steps):
-            loss = svi.step(Y_exp)
-            if step % 100 == 0:
-                print('[iter {}]  loss: {:.4f}'.format(step, loss))
-                print(pyro.param("youngs").item())
 
 if __name__ == "__main__":
     x = inferenceProcess()
