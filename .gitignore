@@ -1,0 +1,6 @@
+# Ignore comsol models
+comsol/
+
+# Ignore IDE specific files
+.idea/
+.vscode/

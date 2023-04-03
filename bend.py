@@ -49,7 +49,7 @@ class inferenceProcess(object):
         files = ["centerFreqResponse", "center2FreqResponse", "randomFreqResponse"]
         self.Y_exp = []
         for file in files:
-            experiment = pd.read_csv("./BayesianVibrationsModeling/Data/bend/"+file+".csv")[20:]
+            experiment = pd.read_csv("./Data/bend/"+file+".csv")[20:]
             # Mobility value calculated from input data and converted to torch
             mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
             self.Y_exp.append(abs(mobility))
@@ -62,7 +62,33 @@ class inferenceProcess(object):
         #print("Our MAP estimate of the Young's modulus is {:.3f}".format(map_estimate)) 
 
 
-    def mobilityFuncModel(self, E, freq, eta=0.007):
+    def mobilityFuncModel(self, E, freq, rho=8.4e-3, eta=0.007):
+        """
+        Calculates the mobility value based on the Young's modulus(E) and the frequency
+        Input: 
+            E   : Young's modulus
+            eta : loss factor
+        Output: 
+            Y   : Mobility value
+        """
+        l = self.beam["length"]/2
+
+        # calculating the bending wave number
+        w = 2*torch.pi*freq # Angular frequency
+        B = E*self.beam["I"] #
+        complex_B = E*(1+1j*eta)*self.beam["I"]
+        massPerUnit = rho*self.beam["thickness"]
+        cb = torch.sqrt(w)*(B/massPerUnit)**(1/4) # bending wave velocity
+        
+        kl = w/(cb)*l # bending wave number
+        complex_kl = kl*(1-1j*eta/4)
+        N_l = torch.cos(complex_kl)*torch.cosh(complex_kl) + 1
+        D_l = torch.cos(complex_kl)*torch.sinh(complex_kl) + torch.sin(complex_kl)*torch.cosh(complex_kl)
+
+        Y = -(1j*l)/ (2*complex_kl*torch.sqrt(complex_B *massPerUnit)) * N_l/D_l
+        return abs(Y)
+
+    def zzzmobilityFuncModel(self, E, freq, eta=0.007):
         """
         Calculates the mobility value based on the Young's modulus(E) and the frequency
         Input: 
@@ -87,6 +113,24 @@ class inferenceProcess(object):
         Y = -(1j*l)/ (2*complex_kl*torch.sqrt(complex_B *self.beam["massPerUnit"])) * N_l/D_l
         return abs(Y)
 
+    def model_YoungDampingDensity(self, x, y_obs):
+        # Density definition
+        rho_mean = pyro.param("rho_mean", dist.Normal(1, 0.5))
+        rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.))
+        rho = pyro.sample("rho", dist.Normal(rho_mean, rho_var))
+        # Damping loss factor definition
+        eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
+        eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
+        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
+        # Young's modulus definition
+        E_mean = pyro.param("E_mean", dist.Normal(0.99, .5))
+        E_var = pyro.param("E_var", dist.Cauchy(0., 0.5))
+        E = pyro.sample("E", dist.Normal(E_mean, E_var))
+        with pyro.plate("data", y_obs.shape[1]):
+            y_values = self.mobilityFuncModel(E*10e10, x, rho=rho*8.4e-3 ,eta=eta*0.01)
+            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
+        return y
+
     def model_YoungDamping(self, x, y_obs):
         # Damping loss factor definition
         eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
@@ -97,7 +141,17 @@ class inferenceProcess(object):
         E_var = pyro.param("E_var", dist.Cauchy(1., 0.))
         E = pyro.sample("E", dist.Normal(E_mean, E_var))
         with pyro.plate("data", y_obs.shape[1]):
-            y_values = self.normalize(self.mobilityFuncModel(E*10e10, x, eta=eta*0.01))
+            y_values = self.mobilityFuncModel(E*10e10, x, eta=eta*0.01)
+            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
+        return y
+
+    def model_Density(self, x, y_obs):
+        # Density definition
+        rho_mean = pyro.param("rho_mean", dist.Normal(1, 3.))
+        rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.))
+        rho = pyro.sample("rho", dist.InverseGamma(rho_mean, rho_var))
+        with pyro.plate("data", y_obs.shape[1]):
+            y_values = self.mobilityFuncModel(0.99*10e10, x, rho=rho*8.4e-3)
             y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
         return y
 
@@ -106,7 +160,7 @@ class inferenceProcess(object):
         E_var = pyro.param("E_var", dist.Cauchy(1., 0.))
         E = pyro.sample("E", dist.Normal(E_mean, E_var))
         with pyro.plate("data", y_obs.shape[1]):
-            y_values = self.normalize(self.mobilityFuncModel(E*10e10, x))
+            y_values = self.mobilityFuncModel(E*10e10, x)
             y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
         return y
     
@@ -122,11 +176,11 @@ class inferenceProcess(object):
 
     def train(self):
         pyro.clear_param_store()
-        y_obs = self.Y_exp#[:, 0:2000] # Suppose this was the vector of observed y's
-        input_x = self.freq#[0:2000]
-        pyro.render_model(self.Model_Young, model_args=(input_x, y_obs), render_distributions=True)
+        y_obs = self.Y_exp[:, 0:2000] # Suppose this was the vector of observed y's
+        input_x = self.freq[0:2000]
+        pyro.render_model(self.model_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
         
-        nuts_kernel = NUTS(self.Model_Young)
+        nuts_kernel = NUTS(self.model_YoungDampingDensity)
         mcmc = MCMC(nuts_kernel, num_samples=len(input_x), warmup_steps=500, num_chains=1)        
         mcmc.run(input_x, y_obs)
 
@@ -138,8 +192,8 @@ class inferenceProcess(object):
         plt.xlabel("Young's modulus values")
         plt.show()
                 
-        sns.displot(posterior_samples["eta"]*10e10)
-        plt.xlabel("damping loss factor values")
+        sns.displot(posterior_samples["rho"]*10e10)
+        plt.xlabel("density values")
         plt.show()
         return
 
