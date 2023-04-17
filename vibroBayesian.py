@@ -37,10 +37,13 @@ class inferenceProcess(object):
         beam["massPerUnit"] = beam["mass"] / beam["length"]
         beam["volume"] = beam["length"] * beam["width"] * beam["thickness"]
         beam["I"] = beam["width"]*beam["thickness"]**3/12
+<<<<<<< HEAD
         beam["freq"] = [[10, 470, 2],[470, 520, 1],[520, 600, 5], ...
                         [600,700, 1],[700,1350, 20],[1350, 1390,2], ...
                         [1390,1570,20],[1570,1630,2], [1630,2650,100], ...
                         [2650,2750,2],[2750,2950, 20], [2950, 3050, 2]]
+=======
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
         return beam
 
     def run(self):

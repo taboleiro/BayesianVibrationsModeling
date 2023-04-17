@@ -11,7 +11,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 import graphviz
+<<<<<<< HEAD
 import utils
+=======
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 
 class inferenceProcess(object):
     def __init__(self):
@@ -30,6 +33,7 @@ class inferenceProcess(object):
             
             "E": 10e10,
             
+<<<<<<< HEAD
             "mass": 0.1877,
             "freq": [[10, 470, 2],[470, 520, 1],[520, 600, 5], \
                     [600,700, 2],[700,1350, 20],[1350, 1390,2], \
@@ -38,6 +42,11 @@ class inferenceProcess(object):
             }
         freqValues = [[117.5,122.5,1],[645.5,650.5,1],[1597.5,1600.5,1], [2977.5,2981.5,1]]
         self.freqVal = utils.createComsolVector("lin", freqValues, param="step", display=False).astype(int)
+=======
+            "mass": 0.1877
+            }
+
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
         beam["massPerUnit"] = beam["mass"] / beam["length"]
         beam["volume"] = beam["length"] * beam["width"] * beam["thickness"]
         beam["I"] = beam["width"]*beam["thickness"]**3/12
@@ -60,7 +69,11 @@ class inferenceProcess(object):
             mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             self.Y_exp.append(abs(mobility))#[self.freqVal*2]))
+=======
+            self.Y_exp.append(abs(mobility))
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 =======
             self.Y_exp.append(abs(mobility))
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
@@ -131,6 +144,7 @@ class inferenceProcess(object):
         # Density definition
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         #rho_mean = pyro.param("rho_mean", dist.Normal(1, 0.0001))
         #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.00001))
         rho = pyro.sample("rho", dist.Normal(1, 1))
@@ -147,6 +161,8 @@ class inferenceProcess(object):
 =======
 =======
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
+=======
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
         rho_mean = pyro.param("rho_mean", dist.Normal(1, 0.5))
         rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.))
         rho = pyro.sample("rho", dist.Normal(rho_mean, rho_var))
@@ -161,6 +177,9 @@ class inferenceProcess(object):
         with pyro.plate("data", y_obs.shape[1]):
             y_values = self.mobilityFuncModel(E*10e10, x, rho=rho*8.4e-3 ,eta=eta*0.01)
 <<<<<<< HEAD
+<<<<<<< HEAD
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
+=======
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 =======
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
@@ -173,7 +192,11 @@ class inferenceProcess(object):
         eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         eta = pyro.sample("eta", dist.LogNormal(eta_mean, eta_var))
+=======
+        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 =======
         eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
@@ -188,7 +211,11 @@ class inferenceProcess(object):
             y_values = self.mobilityFuncModel(E*10e10, x, eta=eta*0.01)
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             y = pyro.sample("y", dist.LogNormal(y_values, 1.), obs=y_obs)
+=======
+            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 =======
             y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
@@ -222,7 +249,10 @@ class inferenceProcess(object):
         eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         print(eta)
+=======
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 =======
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 =======
@@ -237,6 +267,7 @@ class inferenceProcess(object):
         pyro.clear_param_store()
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         y_obs = self.Y_exp # Suppose this was the vector of observed y's
         input_x = torch.tensor(self.freq)#[0:2000]
         pyro.render_model(self.model_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
@@ -246,6 +277,8 @@ class inferenceProcess(object):
 =======
 =======
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
+=======
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
         y_obs = self.Y_exp[:, 0:2000] # Suppose this was the vector of observed y's
         input_x = self.freq[0:2000]
         pyro.render_model(self.model_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
@@ -253,6 +286,9 @@ class inferenceProcess(object):
         nuts_kernel = NUTS(self.model_YoungDampingDensity)
         mcmc = MCMC(nuts_kernel, num_samples=len(input_x), warmup_steps=500, num_chains=1)        
 <<<<<<< HEAD
+<<<<<<< HEAD
+>>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
+=======
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 =======
 >>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
