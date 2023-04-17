@@ -1,0 +1,8 @@
+jpype1
+mph
+pyro
+torch
+pandas 
+numpy
+matplotlib
+seaborn

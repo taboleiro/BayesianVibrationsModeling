@@ -1,0 +1,9 @@
+
+# Ignore IDE specific folders
+.idea/
+.vscode/
+report/
+Data/bend/
+
+# Ignore auxiliar files
+*.log
