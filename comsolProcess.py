@@ -40,20 +40,29 @@ class ComsolProcess(object):
 
     def model_YoungDampingDensity(self, x, y_obs):
         # Density definition
-        rho_mean = pyro.param("rho_mean", dist.Normal(1., 0.5), constraint=constraints.real)
-        rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.), constraint=constraints.positive)
+        #rho_mean = pyro.param("rho_mean", dist.Normal(1., 0.1), constraint=constraints.real)
+        #rho_var = pyro.param("rho_var", torch.tensor(0.5))
+        #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.5), constraint=constraints.positive)
         #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.), constraint=constraints.positive)
-        rho = pyro.sample("rho", dist.Normal(rho_mean, rho_var))
+        #rho = pyro.sample("rho", dist.Normal(rho_mean, rho_var))
+        rho = pyro.sample("rho", dist.LogNormal(0, 0.25))
         # Damping loss factor definition
-        eta_mean = pyro.param("eta_mean", dist.Normal(1., .01), constraint=constraints.positive)
-        eta_var = pyro.param("eta_var", dist.Cauchy(1., .5))
-        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
+        #eta_mean = pyro.param("eta_mean", dist.Normal(1., .5), constraint=constraints.positive)
+        #eta_var = pyro.param("eta_var", torch.tensor(0.5))
+        #eta_var = pyro.param("eta_var", dist.Cauchy(1., .5))
+        #eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
+        eta = pyro.sample("eta", dist.LogNormal(0, 0.25))
         # Young's modulus definition
-        E_mean = pyro.param("E_mean", dist.Normal(1, .01), constraint=constraints.positive)
-        E_var = pyro.param("E_var", dist.Cauchy(1., 0.), constraint=constraints.positive)
-        E = pyro.sample("E", dist.Normal(E_mean, E_var))
+        #E_mean = pyro.param("E_mean", dist.Normal(1, .001), constraint=constraints.positive)
+        #E_var = pyro.param("E_var", torch.tensor(0.2))
+        #E_var = pyro.param("E_var", dist.Cauchy(1., 0.5), constraint=constraints.positive)
+        #E = pyro.sample("E", dist.Normal(E_mean, E_var))
+        E = pyro.sample("E", dist.LogNormal(0, 0.25))
         # Since the studio is done frequcuency by frequency, the loop can't be vectorized like: "with pyro.plate......"
         y = torch.zeros(len(y_obs))
+        print(E)
+        print(eta)
+        print(rho)
         with pyro.plate("data", len(y_obs)):
             #updateParam(model, young=E.detach().numpy(), rho=rho.detach().numpy(), eta=eta.detach().numpy(), freq=x[i])
             self.updateParams(self.model, young=E.detach().numpy(), rho=rho.detach().numpy())
@@ -87,7 +96,7 @@ class ComsolProcess(object):
 
         nuts_kernel = HMC(self.model_YoungDampingDensity, step_size=0.0855, num_steps=4)
         #NUTS(self.model_YoungDampingDensity)
-        mcmc = MCMC(nuts_kernel, num_samples=150, num_chains=1, warmup_steps=40)        
+        mcmc = MCMC(nuts_kernel, num_samples=150, num_chains=1, warmup_steps=10)        
         mcmc.run(input_x, y_obs)
 
         # Show summary of inference results
