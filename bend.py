@@ -6,15 +6,12 @@ from pyro.infer import SVI, Trace_ELBO, MCMC, NUTS
 
 import torch
 from torch.distributions import constraints
-
+import torch.distributions as distTorch
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 import graphviz
-<<<<<<< HEAD
 import utils
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
 
 class inferenceProcess(object):
     def __init__(self):
@@ -22,6 +19,14 @@ class inferenceProcess(object):
         self.freq = []
         self.mobility = [] 
 
+        self.Ehigh = torch.tensor(12e10)
+        self.Elow = torch.tensor(8e10)
+
+        self.rhohigh = torch.tensor(8.8e3)
+        self.rholow = torch.tensor(7.3e3)
+
+        self.etahigh = torch.tensor(0.01)
+        self.etalow = torch.tensor(0.0001)
 
     def beamProperties(self):
         """
@@ -33,7 +38,6 @@ class inferenceProcess(object):
             
             "E": 10e10,
             
-<<<<<<< HEAD
             "mass": 0.1877,
             "freq": [[10, 470, 2],[470, 520, 1],[520, 600, 5], \
                     [600,700, 2],[700,1350, 20],[1350, 1390,2], \
@@ -42,11 +46,6 @@ class inferenceProcess(object):
             }
         freqValues = [[117.5,122.5,1],[645.5,650.5,1],[1597.5,1600.5,1], [2977.5,2981.5,1]]
         self.freqVal = utils.createComsolVector("lin", freqValues, param="step", display=False).astype(int)
-=======
-            "mass": 0.1877
-            }
-
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
         beam["massPerUnit"] = beam["mass"] / beam["length"]
         beam["volume"] = beam["length"] * beam["width"] * beam["thickness"]
         beam["I"] = beam["width"]*beam["thickness"]**3/12
@@ -61,29 +60,19 @@ class inferenceProcess(object):
 
         # Reading and processing input data
         
-        files = ["centerFreqResponse", "center2FreqResponse", "randomFreqResponse"]
+        files = ["centerFreqResponse"]#, "center2FreqResponse", "randomFreqResponse"]
         self.Y_exp = []
         for file in files:
             experiment = pd.read_csv("./Data/bend/"+file+".csv")[20:]
             # Mobility value calculated from input data and converted to torch
             mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-            self.Y_exp.append(abs(mobility))#[self.freqVal*2]))
-=======
-            self.Y_exp.append(abs(mobility))
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
-            self.Y_exp.append(abs(mobility))
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
-            self.Y_exp.append(abs(mobility))
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
+            self.Y_exp = mobility
+            # self.Y_exp.append(abs(mobility))#[self.freqVal*2]))
             #self.Y_exp_norm = (self.Y_exp - self.Y_exp.mean()) / self.Y_exp.std() # Normalization
             self.freq = torch.tensor(experiment["freq"].values) # Freq values(x axis) converted to torch
         #self.Y_exp = pd.read_csv("./BayesianVibrationsModeling/Data/bend/"+file+".csv")[20:]
         self.Y_exp = torch.tensor(self.Y_exp)
+        
         self.train()
         #map_estimate = pyro.param("E").item()
         #print("Our MAP estimate of the Young's modulus is {:.3f}".format(map_estimate)) 
@@ -104,7 +93,7 @@ class inferenceProcess(object):
         w = 2*torch.pi*freq # Angular frequency
         B = E*self.beam["I"] #
         complex_B = E*(1+1j*eta)*self.beam["I"]
-        massPerUnit = rho*self.beam["thickness"]
+        massPerUnit = rho*self.beam["thickness"]*self.beam["width"]
         cb = torch.sqrt(w)*(B/massPerUnit)**(1/4) # bending wave velocity
         
         kl = w/(cb)*l # bending wave number
@@ -142,86 +131,55 @@ class inferenceProcess(object):
 
     def model_YoungDampingDensity(self, x, y_obs):
         # Density definition
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-        #rho_mean = pyro.param("rho_mean", dist.Normal(1, 0.0001))
-        #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.00001))
-        rho = pyro.sample("rho", dist.Normal(1, 1))
+        #rho_mean = pyro.param("rho_mean", dist.Normal(1, .25), constraint=constraints.positive)
+        #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.))
+        #rho = pyro.sample("rho", dist.Normal(1, .25))
+        rho = pyro.sample("rho", dist.Uniform(self.rholow, self.rhohigh))
         # Damping loss factor definition
-        #eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
+        #eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.), constraint=constraints.positive)
         #eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
-        eta = pyro.sample("eta", dist.Normal(1, 1))
+        #eta = pyro.sample("eta", dist.Normal(1, 3.))
+        eta = pyro.sample("eta", dist.Uniform(self.etalow, self.etahigh))
         # Young's modulus definition
-        #E_mean = pyro.param("E_mean", dist.Normal(1, .5))
-        #E_var = pyro.param("E_var", dist.Cauchy(1., 0.5))
-        E = pyro.sample("E", dist.Normal(1, 1))
-        with pyro.plate("data", y_obs.shape[1]):
-            y_values = self.mobilityFuncModel(E*10e10, x, rho=rho*8.4e-3,eta=eta*0.01)
-=======
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-        rho_mean = pyro.param("rho_mean", dist.Normal(1, 0.5))
-        rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.))
-        rho = pyro.sample("rho", dist.Normal(rho_mean, rho_var))
-        # Damping loss factor definition
-        eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
-        eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
-        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
-        # Young's modulus definition
-        E_mean = pyro.param("E_mean", dist.Normal(0.99, .5))
-        E_var = pyro.param("E_var", dist.Cauchy(0., 0.5))
-        E = pyro.sample("E", dist.Normal(E_mean, E_var))
-        with pyro.plate("data", y_obs.shape[1]):
-            y_values = self.mobilityFuncModel(E*10e10, x, rho=rho*8.4e-3 ,eta=eta*0.01)
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
+        #E_mean = pyro.param("E_mean", dist.Normal(0.99, .25), constraint=constraints.positive)
+        #E_var = pyro.param("E_var", dist.Cauchy(1., 0.))
+        #E = pyro.sample("E", dist.Normal(0.99, .25))
+        E = pyro.sample("E", dist.Uniform(self.Elow, self.Ehigh))
+
+        # E lim
+        if E < self.Elow: 
+            E = self.Elow
+        elif E > self.Ehigh:
+            E = self.Ehigh
+        """
+        # rho lim
+        if rho < self.rholow: 
+            rho = self.rholow
+        elif rho > self.rhohigh:
+            rho = self.rhohigh
+        """
+        # eta lim
+        if eta < self.etalow: 
+            eta = self.etalow
+        elif eta > self.etahigh:
+            eta = self.etahigh
+        with pyro.plate("data", len(y_obs)):
+            y_values = self.mobilityFuncModel(E, x, rho=rho ,eta=eta)
+            y = pyro.sample("y", dist.Normal(y_values, 1), obs=y_obs)
         return y
 
     def model_YoungDamping(self, x, y_obs):
         # Damping loss factor definition
         eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
         eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-        eta = pyro.sample("eta", dist.LogNormal(eta_mean, eta_var))
-=======
         eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
-        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
-        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
         # Young's modulus definition
         E_mean = pyro.param("E_mean", dist.Normal(1, 3.))
         E_var = pyro.param("E_var", dist.Cauchy(1., 0.))
         E = pyro.sample("E", dist.Normal(E_mean, E_var))
         with pyro.plate("data", y_obs.shape[1]):
             y_values = self.mobilityFuncModel(E*10e10, x, eta=eta*0.01)
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-            y = pyro.sample("y", dist.LogNormal(y_values, 1.), obs=y_obs)
-=======
             y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
-            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
-            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
         return y
 
     def model_Density(self, x, y_obs):
@@ -247,62 +205,38 @@ class inferenceProcess(object):
         eta_mean = pyro.param("eta_mean", dist.Normal(1, 3))
         eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
         eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-        print(eta)
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
         with pyro.plate("data", y_obs.shape[1]):
             y_values = self.mobilityFuncModel(0.993, x, eta=eta*0.01)
-            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
+            y = pyro.sample("y", dist.Normal(y_values, 0.0001), obs=y_obs)
         return y
 
 
     def train(self):
         pyro.clear_param_store()
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
         y_obs = self.Y_exp # Suppose this was the vector of observed y's
-        input_x = torch.tensor(self.freq)#[0:2000]
+        input_x = self.freq#[0:2000]
+        input_x = torch.tensor(input_x)#[0:2000]
         pyro.render_model(self.model_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
         
         nuts_kernel = NUTS(self.model_YoungDampingDensity)
-        mcmc = MCMC(nuts_kernel, num_samples=2000, warmup_steps=500, num_chains=1)        
-=======
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-        y_obs = self.Y_exp[:, 0:2000] # Suppose this was the vector of observed y's
-        input_x = self.freq[0:2000]
-        pyro.render_model(self.model_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
-        
-        nuts_kernel = NUTS(self.model_YoungDampingDensity)
-        mcmc = MCMC(nuts_kernel, num_samples=len(input_x), warmup_steps=500, num_chains=1)        
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
-=======
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
+        mcmc = MCMC(nuts_kernel, num_samples=2000, warmup_steps=1000, num_chains=1)      
         mcmc.run(input_x, y_obs)
 
         # Show summary of inference results
         mcmc.summary()
         posterior_samples = mcmc.get_samples()
         
-        sns.displot(posterior_samples["E"]*10e10)
+        plt.figure(10)
+        plt.plot(self.freq, 20*np.log10(self.Y_exp))
+
+        mob = self.mobilityFuncModel(posterior_samples["E"].mean(), input_x, rho=posterior_samples["rho"].mean() ,eta=posterior_samples["eta"].mean())
+        plt.plot(self.freq, 20*np.log10(mob))
+        plt.show()
+        sns.displot(posterior_samples["E"])
         plt.xlabel("Young's modulus values")
         plt.show()
                 
-        sns.displot(posterior_samples["rho"]*10e10)
+        sns.displot(posterior_samples["rho"])
         plt.xlabel("density values")
         plt.show()
         return

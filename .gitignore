@@ -1,18 +1,11 @@
-<<<<<<< HEAD
 
 # Ignore IDE specific folders
 .idea/
 .vscode/
 report/
 Data/bend/
+comsol/ 
 
 # Ignore auxiliar files
 *.log
-=======
-# Ignore comsol models
-comsol/
-
-# Ignore IDE specific files
-.idea/
-.vscode/
->>>>>>> 692a6d02fea9af7069f411c9b48f37710ace88f4
+*.mph
