@@ -20,7 +20,7 @@ class inferenceProcess(object):
         self.mobility = [] 
 
         self.Ehigh = torch.tensor(12e10)
-        self.Elow = torch.tensor(8e10)
+        self.Elow = torch.tensor(9e10)
 
         self.rhohigh = torch.tensor(8.8e3)
         self.rholow = torch.tensor(7.3e3)
@@ -63,7 +63,7 @@ class inferenceProcess(object):
         files = ["centerFreqResponse"]#, "center2FreqResponse", "randomFreqResponse"]
         self.Y_exp = []
         for file in files:
-            experiment = pd.read_csv("./Data/bend/"+file+".csv")[20:]
+            experiment = pd.read_csv("./BayesianVibrationsModeling/Data/bend/"+file+".csv")[20:]
             # Mobility value calculated from input data and converted to torch
             mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
             self.Y_exp = mobility
@@ -134,17 +134,18 @@ class inferenceProcess(object):
         #rho_mean = pyro.param("rho_mean", dist.Normal(1, .25), constraint=constraints.positive)
         #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.))
         #rho = pyro.sample("rho", dist.Normal(1, .25))
-        rho = pyro.sample("rho", dist.Uniform(self.rholow, self.rhohigh))
+        #rho = pyro.sample("rho", dist.Uniform(self.rholow, self.rhohigh))
+        rho = pyro.sample("rho", dist.Beta(1, 1))
         # Damping loss factor definition
         #eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.), constraint=constraints.positive)
         #eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
         #eta = pyro.sample("eta", dist.Normal(1, 3.))
-        eta = pyro.sample("eta", dist.Uniform(self.etalow, self.etahigh))
+        eta = pyro.sample("eta", dist.Beta(1, 1))
         # Young's modulus definition
         #E_mean = pyro.param("E_mean", dist.Normal(0.99, .25), constraint=constraints.positive)
         #E_var = pyro.param("E_var", dist.Cauchy(1., 0.))
         #E = pyro.sample("E", dist.Normal(0.99, .25))
-        E = pyro.sample("E", dist.Uniform(self.Elow, self.Ehigh))
+        E = pyro.sample("E", dist.Beta(1, 1))
 
         # E lim
         if E < self.Elow: 
@@ -164,8 +165,8 @@ class inferenceProcess(object):
         elif eta > self.etahigh:
             eta = self.etahigh
         with pyro.plate("data", len(y_obs)):
-            y_values = self.mobilityFuncModel(E, x, rho=rho ,eta=eta)
-            y = pyro.sample("y", dist.Normal(y_values, 1), obs=y_obs)
+            y_values = self.mobilityFuncModel(E*10e10, x, rho=rho*846 ,eta=eta+0.01)
+            y = pyro.sample("y", dist.Normal(y_values, 0.0001), obs=y_obs)
         return y
 
     def model_YoungDamping(self, x, y_obs):
@@ -229,7 +230,7 @@ class inferenceProcess(object):
         plt.figure(10)
         plt.plot(self.freq, 20*np.log10(self.Y_exp))
 
-        mob = self.mobilityFuncModel(posterior_samples["E"].mean(), input_x, rho=posterior_samples["rho"].mean() ,eta=posterior_samples["eta"].mean())
+        mob = self.mobilityFuncModel(10e10*posterior_samples["E"].mean(), input_x, rho=846*posterior_samples["rho"].mean() ,eta=0.01*posterior_samples["eta"].mean())
         plt.plot(self.freq, 20*np.log10(mob))
         plt.show()
         sns.displot(posterior_samples["E"])

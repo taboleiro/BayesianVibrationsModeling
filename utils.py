@@ -1,5 +1,8 @@
 import numpy as np
+import pandas as pd
+
 import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
 import subprocess
 
 def createComsolVector(scale, sections, param="n_points", display=False):
@@ -100,7 +103,23 @@ def createComsolVector(scale, sections, param="n_points", display=False):
 
     return valList
 
+
+def resonances(data):
+    # find the resonances
+    peaks = find_peaks(data, prominence=0.3)[0]
+
+    # take the index of the previous and next 10 values of each resonance
+    freq = np.linspace(peaks-np.ones(len(peaks))*10, peaks+np.ones(len(peaks))*10, 21).T
+    
+    # Convert matrix into array
+    return freq.flatten().astype(int)
+
+
 if __name__ == "__main__":
-    freqVector = [[280, 1, 450], \
-                  [101, 1000, 5]]
-    createComsolVector("lin",[[280, 1, 450],[101, 1000, 5]], param="step", display=True)
+    # freqVector = [[280, 1, 450], [101, 1000, 5]]
+    # createComsolVector("lin",[[280, 1, 450],[101, 1000, 5]], param="step", display=True)
+    experiment = pd.read_csv("./Data/bend/centerFreqResponse.csv")[20:]
+    mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
+    peaks = resonances(mobility)
+    plt.plot(experiment["freq"], mobility)
+    plt.plot(experiment["freq"], peaks, "x")

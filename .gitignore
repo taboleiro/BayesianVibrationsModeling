@@ -4,6 +4,7 @@
 .vscode/
 report/
 Data/bend/
+figuresResults/
 comsol/ 
 
 # Ignore auxiliar files

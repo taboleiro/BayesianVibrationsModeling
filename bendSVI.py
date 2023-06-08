@@ -3,7 +3,9 @@ import pandas as pd
 import pyro
 import pyro.distributions as dist
 from pyro.infer import SVI, Trace_ELBO, MCMC, NUTS
+from pyro.infer.autoguide import AutoDiagonalNormal
 from pyro.optim import Adam
+from tqdm import tqdm
 
 import torch
 from torch.distributions import constraints
@@ -19,6 +21,23 @@ class inferenceProcess(object):
         self.beam = {}
         self.freq = []
         self.mobility = [] 
+
+
+        self.beam = {}
+        self.freq = []
+        self.mobility = [] 
+
+        self.E_theo = 10e10
+        self.Ehigh = torch.tensor(12e10)
+        self.Elow = torch.tensor(9e10)
+
+        self.rho_theo = 8460
+        self.rhohigh = torch.tensor(8.8e3)
+        self.rholow = torch.tensor(7.3e3)
+
+        self.eta_theo = 0.01
+        self.etahigh = torch.tensor(0.01)
+        self.etalow = torch.tensor(0.0001)
 
 
     def beamProperties(self):
@@ -56,7 +75,7 @@ class inferenceProcess(object):
         files = ["centerFreqResponse", "center2FreqResponse", "randomFreqResponse"]
         self.Y_exp = []
         for file in files:
-            experiment = pd.read_csv("./Data/bend/"+file+".csv")[20:]
+            experiment = pd.read_csv("./Data/bend/"+file+".csv")[20:2000]
             # Mobility value calculated from input data and converted to torch
             mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
             self.Y_exp.append(abs(mobility))#[self.freqVal*2]))
@@ -97,37 +116,41 @@ class inferenceProcess(object):
 
 
     def model_YoungDampingDensity(self, x, y_obs):
+
+        self.Ehigh = torch.tensor(12e10)
+        self.Elow = torch.tensor(9e10)
+
+        self.rhohigh = torch.tensor(8.8e3)
+        self.rholow = torch.tensor(7.3e3)
+
+        self.etahigh = torch.tensor(0.01)
+        self.etalow = torch.tensor(0.0001)
         # Density definition
-        #rho_mean = pyro.param("rho_mean", dist.Normal(1, 0.0001))
-        #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.00001))
-        rho = pyro.sample("rho", dist.Normal(1, 1))
+        rho = pyro.sample("rho", dist.Normal(0, 0.1))
         # Damping loss factor definition
-        #eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
-        #eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
-        eta = pyro.sample("eta", dist.Normal(1, 1))
+        eta = pyro.sample("eta", dist.Normal(0, 0.1))
         # Young's modulus definition
-        #E_mean = pyro.param("E_mean", dist.Normal(1, .5))
-        #E_var = pyro.param("E_var", dist.Cauchy(1., 0.5))
-        E = pyro.sample("E", dist.Normal(1, 1))
-        with pyro.plate("data", y_obs.shape):
-            y_values = self.mobilityFuncModel(E*10e10, x, rho=rho*8.4e-3,eta=eta*0.01)
-            y = pyro.sample("y", dist.Normal(y_values, 1.), obs=y_obs)
+        E = pyro.sample("E", dist.Normal(0, 0.1))
+        with pyro.plate("data", y_obs.shape[0]):
+            E_sample = self.E_theo*(1+E)
+            rho_sample = self.rho_theo*(1+rho)
+            eta_sample = self.eta_theo*(1+eta)
+            #print(eta)
+            #print(E)
+            y_values = self.mobilityFuncModel(E_sample, x, rho=rho_sample, eta=eta_sample)
+            y = pyro.sample("y", dist.Normal(y_values, .1), obs=y_obs)
         return y
 
     def guide(self, x, y_obs):
         # Density definition
-        #rho_mean = pyro.param("rho_mean", dist.Normal(1, 0.0001))
-        #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.00001))
-        rho = pyro.sample("rho", dist.Normal(1.5, 1))
-        # Damping loss factor definition
-        #eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.))
-        #eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
-        eta = pyro.sample("eta", dist.Normal(1.1, 1))
-        # Young's modulus definition
-        #E_mean = pyro.param("E_mean", dist.Normal(1, .5))
-        #E_var = pyro.param("E_var", dist.Cauchy(1., 0.5))
-        E = pyro.sample("E", dist.Normal(0.9996, 1))
+        rho_mean = pyro.param("rho_mean", dist.Normal(0, 0.5))
+        rho_q = pyro.sample("rho_q", dist.Normal(rho_mean, 0.1))
 
+        eta_mean = pyro.param("eta_mean", dist.Normal(0, 0.5))
+        eta_q = pyro.sample("eta_q", dist.Normal(eta_mean, 0.1))
+
+        E_mean = pyro.param("E_mean", dist.Normal(0, 0.5))
+        E_q = pyro.sample("E_q", dist.Normal(E_mean, 0.1))
 
     def train(self):
         pyro.clear_param_store()
@@ -136,26 +159,26 @@ class inferenceProcess(object):
         #pyro.render_model(, model_args=(input_x, y_obs), render_distributions=True)
 
         # setup the optimizer
-        adam_params = {"lr": 0.0005, "betas": (0.90, 0.999)}
-        optimizer = Adam(adam_params)
-
+        num_steps = 5000
+        initial_lr = 0.1
+        gamma = 0.001  # final learning rate will be gamma * initial_lr
+        lrd = gamma ** (1 / num_steps)
+        optimizer = pyro.optim.ClippedAdam({'lr': initial_lr, 'lrd': lrd})
+        #adam_params = {"lr": 0.01, "betas": (0.90, 0.999)}
+        #optimizer = Adam(adam_params)
+        #guide = AutoDiagonalNormal(self.model_YoungDampingDensity)
+        guide = self.guide(x, y_obs)
         # setup the inference algorithm
-        svi = SVI(self.model_YoungDampingDensity, self.guide, optimizer, loss=Trace_ELBO())
+        svi = SVI(self.model_YoungDampingDensity, guide, optimizer, loss=Trace_ELBO())
 
         # do gradient steps
-        n_steps = 500
-        for step in range(n_steps):
-            svi.step(input_x, y_obs[0])
-            if step % 100 == 0:
-                print('.', end='')
-        nuts_kernel = NUTS(self.model_YoungDampingDensity)
-        mcmc = MCMC(nuts_kernel, num_samples=2000, warmup_steps=500, num_chains=1)        
-        mcmc.run(input_x, y_obs)
+        n_steps = 5000
+        loss = np.zeros(n_steps)
+        for step in tqdm(range(n_steps)):
+            loss[step] = svi.step(input_x, y_obs[0])
 
         # Show summary of inference results
-        mcmc.summary()
-        posterior_samples = mcmc.get_samples()
-        
+        plt.plot(range(n_steps), loss)
         sns.displot(posterior_samples["E"]*10e10)
         plt.xlabel("Young's modulus values")
         plt.show()
