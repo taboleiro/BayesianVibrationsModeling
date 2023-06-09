@@ -80,26 +80,20 @@ def guide(x, y_obs):
     # Density guide
     rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
     rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
-    rho = pyro.sample("rho", dist.Normal(rho_mean, rho_std))
+    pyro.sample("rho", dist.Normal(rho_mean, rho_std))
 
     # Damping loss factor guide
     eta_mean = pyro.param("eta_mean", dist.LogNormal(0, 1))
     eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
-    eta = pyro.sample("eta", dist.Normal(eta_mean, eta_std))
+    pyro.sample("eta", dist.Normal(eta_mean, eta_std))
 
     # Damping loss factor guide
     E_mean = pyro.param("E_mean", dist.Normal(0, 1))
     E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
-    E = pyro.sample("E", dist.Normal(E_mean, E_std))
+    pyro.sample("E", dist.Normal(E_mean, E_std))
     
 
-    rho, eta, E = normalization(rho, eta, E, rho_std, eta_std, E_std)
-    with pyro.plate("data", len(y_obs)):
-        y_values = mobilityFuncModel(E, rho, eta, x)
-        y = pyro.sample("y", dist.Normal(20*torch.log10(y_values), 0.01), obs=20*torch.log10(y_obs))
-    return y
-
-def normalization(rho, eta, E, rho_var, eta_var, E_var, type=""):
+def normalization(rho, eta, E, rho_var, eta_var, E_var):
     E_theo=10.0e10
     E_var_init = 5e9
     rho_theo=8050.0
@@ -117,7 +111,7 @@ def normalization(rho, eta, E, rho_var, eta_var, E_var, type=""):
 
     return rho_norm, eta_norm, E_norm
 
-def train(freq, data, model, guide, lr=0.00001, n_steps=1):
+def train(freq, data, model, guide, lr=0.00001, n_steps=1000):
     pyro.clear_param_store()
     adam_params = {"lr": lr, 
                    "betas": (0.9, 0.999),

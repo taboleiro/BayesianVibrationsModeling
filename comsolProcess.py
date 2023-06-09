@@ -34,99 +34,79 @@ class ComsolProcess(object):
         self.rholow = 7300
 
         self.etahigh = 0.5
-        self.etalow = 0.001   
+        self.etalow = 0.001  
+
+        
+        self.E_mean=10.0e10
+        self.E_var_init = 5e9
+        self.rho_mean=8050.0
+        self.rho_var_init = 250
+        self.eta_mean=0.00505
+        self.eta_var_init = 0.002 
         # Starting comsol process
         client = mph.start()
         self.model = client.load(comsolModelPath)
 
 
     def updateParams(self, model, E=1, rho=1, eta=1):#, freq=10):
-        E = E*self.E_theo
-        rho = rho*self.rho_theo
-        eta = eta*self.eta_theo# E lim
-
-        if E < self.Elow: 
-            E = self.Elow
-        elif E > self.Ehigh:
-            E = self.Ehigh
-        
-        # rho lim
-        if rho < self.rholow: 
-            rho = self.rholow
-        elif rho > self.rhohigh:
-            rho = self.rhohigh
-        
-        # eta lim
-        if eta < self.etalow: 
-            eta = self.etalow
-        elif eta > self.etahigh:
-            eta = self.etahigh
-
-        print("E: "+str(E))
-        print("rho: "+str(rho))
-        print("eta: "+str(eta))
         model.parameter('Youngs', str(E)+' [Pa]')
         model.parameter('density', str(rho)+' [kg/m^3]')
         model.parameter('damping', str(eta)+' [Pa]')
         #model.parameter('freq', str(freq)+' [Hz]')
 
 
-    def zzzmodel_YoungDampingDensity(self, x, y_obs):
-        # Density definition
-        #rho_mean = pyro.param("rho_mean", dist.Normal(1., 0.1), constraint=constraints.real)
-        #rho_var = pyro.param("rho_var", torch.tensor(0.5))
-        #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.5), constraint=constraints.positive)
-        #rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.), constraint=constraints.positive)
-        #rho = pyro.sample("rho", dist.Normal(rho_mean, rho_var))
-        rho = pyro.sample("rho", dist.Normal(1, 0.5))
-        # Damping loss factor definition
-        #eta_mean = pyro.param("eta_mean", dist.Normal(1., .5), constraint=constraints.positive)
-        #eta_var = pyro.param("eta_var", torch.tensor(0.5))
-        #eta_var = pyro.param("eta_var", dist.Cauchy(1., .5))
-        #eta = pyro.sample("eta", dist.Normal(eta_mean, eta_var))
-        eta = pyro.sample("eta", dist.Normal(1, 0.20))
-        # Young's modulus definition
-        #E_mean = pyro.param("E_mean", dist.Normal(1, .001), constraint=constraints.positive)
-        #E_var = pyro.param("E_var", torch.tensor(0.2))
-        #E_var = pyro.param("E_var", dist.Cauchy(1., 0.5), constraint=constraints.positive)
-        #E = pyro.sample("E", dist.Normal(E_mean, E_var))
-        E = pyro.sample("E", dist.Uniform(0.1, 0.2))
-        # Since the studio is done frequcuency by frequency, the loop can't be vectorized like: "with pyro.plate......"
-        y = torch.zeros(len(y_obs))
+    def normalization(self, rho, eta, E, rho_var, eta_var, E_var):
 
-        
+        rho_var = rho_var*self.rho_var_init
+        eta_var = eta_var*self.eta_var_init
+        E_var = E_var*self.E_var_init
 
-        with pyro.plate("data", len(y_obs)):
-            self.updateParams(self.model, E=E.detach().numpy(), rho=rho.detach().numpy(), eta=eta.detach().numpy())
-            self.model.solve("Study 3")
-            comsolResults = abs(self.model.evaluate('comp1.point1'))
-            y = pyro.sample("y", dist.Normal(torch.tensor(comsolResults), 1), obs=y_obs)
-        return y
+        rho_norm = rho*rho_var + self.rho_mean
+        eta_norm = eta*eta_var + self.eta_mean
+        E_norm = E*E_var + self.E_theo
 
-
+        return rho_norm, eta_norm, E_norm
 
     def model_YoungDampingDensity(self, x, y_obs):
-                # Density definition
-        rho_mean = pyro.param("rho_mean", dist.Normal(1, .05), constraint=constraints.positive)
-        rho_var = pyro.param("rho_var", dist.Cauchy(1., 0.))
-        rho = pyro.sample("rho", dist.Normal(1, .05).mask((0.7 <= x) & (x <= 1.3)))
+        # Density definition
+        rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
+        rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
+        rho = pyro.sample("rho", dist.Normal(rho_mean, rho_std))
         # Damping loss factor definition
-        eta_mean = pyro.param("eta_mean", dist.Normal(1, 3.), constraint=constraints.positive)
-        eta_var = pyro.param("eta_var", dist.Cauchy(1., 0.))
-        eta = pyro.sample("eta", dist.Normal(1, .5).mask((0.5 <= x) & (x <= 1.5)))
+        eta_mean = pyro.param("eta_mean", dist.Normal(0, 1))
+        eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
+        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_std))
         # Young's modulus definition
-        E_mean = pyro.param("E_mean", dist.Normal(0.99, .05), constraint=constraints.positive)
-        E_var = pyro.param("E_var", dist.Cauchy(1., 0.))
-        E = pyro.sample("E", dist.Normal(1, .05).mask((0.9 <= x) & (x <= 1.1)))
-        with pyro.plate("data", len(y_obs)):
+        E_mean = pyro.param("E_mean", dist.Normal(0, 1))
+        E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
+        E = pyro.sample("E", dist.Normal(E_mean, E_std))
+        
+        rho, eta, E = self.normalization(rho, eta, E, rho_std, eta_std, E_std)
+
+        with pyro.plate("data", len(y_obs)):            
             #updateParam(model, young=E.detach().numpy(), rho=rho.detach().numpy(), eta=eta.detach().numpy(), freq=x[i])
             self.updateParams(self.model, young=E.detach().numpy(), rho=rho.detach().numpy(), eta=eta.detach().numpy())
             self.model.solve("Study 3")
             comsolResults = abs(self.model.evaluate('comp1.point1'))
-            y = pyro.sample("y", dist.Normal(comsolResults, 1.), obs=y_obs)
-            #plt.plot(x, y_obs)
-            #plt.plot(x, y)
+            y = pyro.sample("y", dist.Normal(20*torch.log10(comsolResults), 0.001), obs=20*torch.log10(y_obs))
         return y
+
+    def guide(self, x, y_obs):
+        # Density guide
+        rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
+        rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
+        pyro.sample("rho", dist.Normal(rho_mean, rho_std))
+
+        # Damping loss factor guide
+        eta_mean = pyro.param("eta_mean", dist.LogNormal(0, 1))
+        eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
+        pyro.sample("eta", dist.Normal(eta_mean, eta_std))
+
+        # Damping loss factor guide
+        E_mean = pyro.param("E_mean", dist.Normal(0, 1))
+        E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
+        pyro.sample("E", dist.Normal(E_mean, E_std))
+
 
     def run(self):
 
