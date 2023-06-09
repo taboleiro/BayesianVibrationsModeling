@@ -17,6 +17,7 @@ import time
 
 import graphviz
 import utils
+from tqdm import tqdm
 
 class ComsolProcess(object):
     def __init__(self, comsolModelPath, inputFiles, freqValues):
@@ -108,7 +109,7 @@ class ComsolProcess(object):
         pyro.sample("E", dist.Normal(E_mean, E_std))
 
 
-    def run(self):
+    def run(self, freq, data, model, guide, lr=0.00001, n_steps=1000):
 
         #freqVal = utils.createComsolVector("lin", self.freqValues, param="step", display=False)
         freqVal = [115.0, 115.5, 116.0, 116.5, 117.0, 117.5, 118.0, 118.5, 119.0, 119.5, 120.0, 120.5, 121.0, 121.5, 122.0, 122.5, 123.0, 123.5, 124.0, 124.5, 642.0, 642.5, 643.0, 643.5, 644.0, 644.5, 645.0, 645.5, 646.0, 646.5, 647.0, 647.5, 648.0, 648.5, 649.0, 649.5, 650.0, 650.5, 651.0, 651.5, 1595.5, 1596.0, 1596.5, 1597.0, 1597.5, 1598.0, 1598.5, 1599.0, 1599.5, 1600.0, 1600.5, 1601.0, 1601.5, 1602.0, 1602.5, 1603.0, 1603.5, 1604.0, 1604.5, 1605.0, 2974.5, 2975.0, 2975.5, 2976.0, 2976.5, 2977.0, 2977.5, 2978.0, 2978.5, 2979.0, 2979.5, 2980.0, 2980.5, 2981.0, 2981.5, 2982.0, 2982.5, 2983.0, 2983.5, 2984.0]
@@ -131,29 +132,27 @@ class ComsolProcess(object):
         y_obs = torch.tensor(Y_exp[(freqVal*2).astype(int)]) # Suppose this was the vector of observed y's
 
         pyro.clear_param_store()
-        pyro.render_model(self.zzzmodel_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
+        adam_params = {"lr": lr, 
+                        "betas": (0.9, 0.999),
+                        "eps": 1e-08}
+        adam = pyro.optim.Adam(adam_params)
 
-        #nuts_kernel = HMC(self.model_YoungDampingDensity, step_size=0.00001, num_steps=4)
-        nuts_kernel = NUTS(self.zzzmodel_YoungDampingDensity)
-        mcmc = MCMC(nuts_kernel, num_samples=200, num_chains=1, warmup_steps=50)        
-        mcmc.run(input_x, y_obs)
+        svi = SVI(model, guide, adam, loss=Trace_ELBO())
 
-        # Show summary of inference results
-        mcmc.summary()
-        posterior_samples = mcmc.get_samples()
-
-        sns.displot(posterior_samples["E"]*10e10)
-        plt.xlabel("Young's modulus values")
-        plt.show()
-                
-        sns.displot(posterior_samples["rho"]*8976)
-        plt.xlabel("density values")
-        plt.show()
-
-        sns.displot(posterior_samples["eta"]*0.01)
-        plt.xlabel("eta / ")
-        plt.show()
-        return
+        losses = []
+        for step in tqdm(range(n_steps)):
+            loss = svi.step(freq, data)
+            if step % 50 == 0:
+                losses.append(loss)
+                #print(".", end="")
+                #print('[iter {}]  loss: {:.4f}'.format(step, loss))
+        plt.figure(10)
+        plt.plot(np.linspace(0, n_steps, len(losses)), losses, "*-")
+        plt.yscale("log")
+        plt.xlabel("iterations ")
+        plt.ylabel(" Error estimation")
+        plt.savefig("./figuresResults/ErrorElboNO"+str(lr).split(".")[-1]+"_"+str(n_steps)+"_all.png")
+        return lr, n_steps
 
 if __name__ == "__main__":
  
@@ -165,7 +164,6 @@ if __name__ == "__main__":
                   [2977.5, 2981.5, 0.5]] 
     freqValues = [[60, 600, 1]]
     obj = ComsolProcess("comsol/beam.mph", files, freqValues)
-    obj.run()
 
 
     
