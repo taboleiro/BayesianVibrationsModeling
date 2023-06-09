@@ -57,18 +57,20 @@ def mobilityFuncModel(E_dist, rho_dist, eta_dist, freq, E_theo=10e10, rho_theo=8
 
 def model_YoungDampingDensity(x, y_obs):
     # Density definition
-    E_theo=10e10
-    rho_theo=8976
-    eta_theo=0.007
-    rho_mean = pyro.param("rho_mean", dist.Normal(rho_theo, 250))
-    rho = pyro.sample("rho", dist.Normal(rho_mean, 0.1))
+    rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
+    rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
+    rho = pyro.sample("rho", dist.Normal(rho_mean, rho_std))
     # Damping loss factor definition
-    eta_mean = pyro.param("eta_mean", dist.Normal(eta_theo, 0.002))
-    eta = pyro.sample("eta", dist.Normal(eta_mean, 0.1))
+    eta_mean = pyro.param("eta_mean", dist.Normal(0, 1))
+    eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
+    eta = pyro.sample("eta", dist.Normal(eta_mean, eta_std))
     # Young's modulus definition
-    E_mean = pyro.param("E_mean", dist.Normal(E_theo, 5e9))
-    E = pyro.sample("E", dist.Normal(E_mean, 0.1))
+    E_mean = pyro.param("E_mean", dist.Normal(0, 1))
+    E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
+    E = pyro.sample("E", dist.Normal(E_mean, E_std))
     
+    rho, eta, E = normalization(rho, eta, E, rho_std, eta_std, E_std)
+
     with pyro.plate("data", len(y_obs)):
         y_values = mobilityFuncModel(E, rho, eta, x)
         y = pyro.sample("y", dist.Normal(20*torch.log10(y_values), 0.001), obs=20*torch.log10(y_obs))
@@ -76,29 +78,46 @@ def model_YoungDampingDensity(x, y_obs):
 
 def guide(x, y_obs):
     # Density guide
-    E_theo=10.0e10
-    rho_theo=8976.
-    eta_theo=0.007
-    rho_mean = pyro.param("rho_mean", dist.Normal(rho_theo, 250), constraint=constraints.positive)
-    rho_std = pyro.param("rho_std", torch.tensor(0.3), constraint=constraints.positive)
+    rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
+    rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
     rho = pyro.sample("rho", dist.Normal(rho_mean, rho_std))
 
     # Damping loss factor guide
-    eta_mean = pyro.param("eta_mean", dist.Normal(eta_theo, 0.002), constraint=constraints.positive)
-    eta_std = pyro.param("eta_std", torch.tensor(.2), constraint=constraints.positive)
+    eta_mean = pyro.param("eta_mean", dist.LogNormal(0, 1))
+    eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
     eta = pyro.sample("eta", dist.Normal(eta_mean, eta_std))
 
     # Damping loss factor guide
-    E_mean = pyro.param("E_mean", dist.Normal(E_theo, 5e9), constraint=constraints.positive)
-    E_std = pyro.param("E_std", torch.tensor(1.), constraint=constraints.positive)
+    E_mean = pyro.param("E_mean", dist.Normal(0, 1))
+    E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
     E = pyro.sample("E", dist.Normal(E_mean, E_std))
- 
+    
+
+    rho, eta, E = normalization(rho, eta, E, rho_std, eta_std, E_std)
     with pyro.plate("data", len(y_obs)):
         y_values = mobilityFuncModel(E, rho, eta, x)
         y = pyro.sample("y", dist.Normal(20*torch.log10(y_values), 0.01), obs=20*torch.log10(y_obs))
     return y
 
-def train(freq, data, model, guide, lr=0.001, n_steps=50001):
+def normalization(rho, eta, E, rho_var, eta_var, E_var, type=""):
+    E_theo=10.0e10
+    E_var_init = 5e9
+    rho_theo=8050.0
+    rho_var_init = 250
+    eta_mean=0.00505
+    eta_var_init = 0.002
+
+    rho_var = rho_var*rho_var_init
+    eta_var = eta_var*eta_var_init
+    E_var = E_var*E_var_init
+
+    rho_norm = rho*rho_var + rho_theo
+    eta_norm = eta*eta_var + eta_mean
+    E_norm = E*E_var + E_theo
+
+    return rho_norm, eta_norm, E_norm
+
+def train(freq, data, model, guide, lr=0.00001, n_steps=1):
     pyro.clear_param_store()
     adam_params = {"lr": lr, 
                    "betas": (0.9, 0.999),
@@ -117,7 +136,9 @@ def train(freq, data, model, guide, lr=0.001, n_steps=50001):
     plt.figure(10)
     plt.plot(np.linspace(0, n_steps, len(losses)), losses, "*-")
     plt.yscale("log")
-    plt.savefig("./figuresResults/ErrorElboNO"+str(lr).split(".")[-1]+"_"+str(n_steps)+".png")
+    plt.xlabel("iterations ")
+    plt.ylabel(" Error estimation")
+    plt.savefig("./figuresResults/ErrorElboNO"+str(lr).split(".")[-1]+"_"+str(n_steps)+"_all.png")
     return lr, n_steps
 
 if __name__ == "__main__":
@@ -128,8 +149,9 @@ if __name__ == "__main__":
         # Mobility value calculated from input data and converted to torch
         mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
         peaks = utils.resonances(mobility)
-        Y_exp = mobility[peaks]
-        freq = torch.tensor(experiment["freq"][peaks].values) # Freq values(x axis) converted to torch
+        Y_exp = mobility#[peaks]
+        #freq = torch.tensor(experiment["freq"][peaks].values) # Freq values(x axis) converted to torch
+        freq = torch.tensor(experiment["freq"].values) # Freq values(x axis) converted to torch
     #Y_exp = pd.read_csv("./BayesianVibrationsModeling/Data/bend/"+file+".csv")[20:]
     Y_exp = torch.tensor(Y_exp)
 
@@ -137,6 +159,11 @@ if __name__ == "__main__":
     E_est = pyro.param("E_mean").item()
     eta_est = pyro.param("eta_mean").item()
     rho_est = pyro.param("rho_mean").item()
+    E_std = pyro.param("E_std").item()
+    eta_std = pyro.param("eta_std").item()
+    rho_std = pyro.param("rho_std").item()
+
+    rho_est, eta_est, E_est = normalization(rho_est, eta_est, E_est, rho_std, eta_std, E_std)  
 
     print("Our MAP estimate of E is {:.3f}".format((E_est)))
     print("Our MAP estimate of eta is {:.3f}".format((eta_est)))
@@ -145,25 +172,69 @@ if __name__ == "__main__":
     plt.figure(11)
     mob_dB = 20*np.log10(mobility)
     plt.plot(experiment["freq"].values, mob_dB, label="experiment")
-    Y_est = mobilityFuncModel(torch.tensor(E_est), torch.tensor(rho_est), torch.tensor(eta_est), torch.tensor(experiment["freq"].values))
-    plt.plot(experiment["freq"].values, 20*np.log10(Y_est), label="initial")
+    #Y_est = mobilityFuncModel(torch.tensor(E_est), torch.tensor(rho_est), torch.tensor(eta_est), torch.tensor(experiment["freq"].values))
+    #plt.plot(experiment["freq"].values, 20*np.log10(Y_est), label="initial")
     Y_est = mobilityFuncModel(torch.tensor(E_est), torch.tensor(rho_est), torch.tensor(eta_est), torch.tensor(experiment["freq"].values))
     plt.plot(experiment["freq"].values, 20*np.log10(Y_est), label="estimated")
-    plt.savefig("./figuresResults/mobNO_"+str(lr).split(".")[-1]+"_"+str(n_steps)+".png")
-    plt.show()
+    plt.xlabel("Frequency / Hz")
+    plt.ylabel("Mobility / dB")
+    plt.ylabel(" Error estimation")
+    plt.savefig("./figuresResults/mobNO_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all.png")
 
 
+    E_theo=10.0e10
+    E_var_init = 5e9
+    rho_theo=8050.0
+    rho_var_init = 250
+    eta_mean=0.00505
+    eta_var_init = 0.002
+    
+    # ETA DISTRIBUTION PLOT
     plt.figure(12)
     eta_theo = 0.01
     variance = 1
     sigma = np.sqrt(variance)
-    x_init = np.linspace(eta_theo - 3*sigma, eta_theo + 3*sigma, 100)
-    plt.plot(x_init, stats.norm.pdf(x_init, eta_theo, sigma))
+    x_init = np.linspace(-3*sigma*eta_var_init, 3*sigma*eta_var_init, 100) + eta_theo
+    plt.plot(x_init, stats.norm.pdf(x_init, eta_theo, sigma*eta_var_init), label="prior")
 
-
-    eta_mean = pyro.param("eta_mean").item()
     eta_var = pyro.param("eta_std").item()
     sigma = np.sqrt(eta_var)
-    x = np.linspace(eta_mean - 3*sigma, eta_mean + 3*sigma, 100)
-    plt.plot(x, stats.norm.pdf(x, eta_mean, sigma))
+    x = np.linspace(-3*eta_var_init*eta_std, 3*eta_var_init*eta_std, 100)+ eta_est
+    plt.plot(x, stats.norm.pdf(x, eta_est, eta_var_init*eta_std), label="posterior")
+    plt.xlabel("Damping loss factors")
+    plt.legend()
+    plt.savefig("./figuresResults/ETA_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all.png")
+
+    # RHO DISTRIBUTION PLOT
+    plt.figure(13)
+    eta_theo = 0.01
+    variance = 1
+    sigma = np.sqrt(variance)
+    x_init = np.linspace(-3*sigma*rho_var_init, 3*sigma*rho_var_init, 100) + rho_theo
+    plt.plot(x_init, stats.norm.pdf(x_init, rho_theo, sigma*rho_var_init), label="prior")
+
+    rho_std = pyro.param("rho_std").item()
+    sigma = np.sqrt(rho_std)
+    x = np.linspace(-3*rho_var_init*rho_std, 3*rho_var_init*rho_std, 100)+ rho_est
+    plt.plot(x, stats.norm.pdf(x, rho_est, rho_var_init*rho_std), label="posterior")
+    plt.xlabel("Density / Kg/m^3")
+    plt.legend()
+    plt.savefig("./figuresResults/RHO_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all.png")
+
+    # E DISTRIBUTION PLOT
+    plt.figure(14)
+    E_theo = 10.0e10
+    variance = 1
+    sigma = np.sqrt(variance)
+    x_init = np.linspace(-3*sigma*E_var_init, 3*sigma*E_var_init, 100) + E_theo
+    plt.plot(x_init, stats.norm.pdf(x_init, E_theo, sigma*E_var_init), label="prior")
+
+    E_mean = pyro.param("E_mean").item()
+    E_var = pyro.param("E_std").item()
+    sigma = np.sqrt(E_std)
+    x = np.linspace(-3*E_var_init*E_std, 3*E_var_init*E_std, 100)+ E_est
+    plt.plot(x, stats.norm.pdf(x, E_est, E_var_init*E_std), label="posterior")
+    plt.xlabel("Young's modulus / Pa")
+    plt.legend()
+    plt.savefig("./figuresResults/E_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all.png")
     plt.show()

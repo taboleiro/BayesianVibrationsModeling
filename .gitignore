@@ -10,3 +10,4 @@ comsol/
 # Ignore auxiliar files
 *.log
 *.mph
+*.pyc
