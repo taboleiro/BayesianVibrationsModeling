@@ -5,6 +5,9 @@ from torch.distributions import constraints
 from scipy import stats
 import pyro
 import pyro.distributions as dist
+import pyro.poutine as poutine
+
+from pyro.poutine.runtime import effectful
 from pyro.infer import SVI, Trace_ELBO
 import matplotlib.pyplot as plt
 import utils
@@ -26,10 +29,7 @@ def mobilityFuncModel(E_dist, rho_dist, eta_dist, freq, E_theo=10e10, rho_theo=8
         "E": 10e10,
         
         "mass": 0.1877,
-        "freq": [[10, 470, 2],[470, 520, 1],[520, 600, 5], \
-                [600,700, 2],[700,1350, 20],[1350, 1390,2], \
-                [1390,1570,20],[1570,1630,2], [1630,2650,100], \
-                [2650,2750,2],[2750,2950, 20], [2950, 3050, 2]]
+        
         }
     beam["massPerUnit"] = beam["mass"] / beam["length"]
     beam["volume"] = beam["length"] * beam["width"] * beam["thickness"]
@@ -55,6 +55,7 @@ def mobilityFuncModel(E_dist, rho_dist, eta_dist, freq, E_theo=10e10, rho_theo=8
     Y = -(1j*l)/ (2*complex_kl*torch.sqrt(complex_B *massPerUnit)) * N_l/D_l
     return abs(Y)
 
+@poutine.scale(scale=1.0/3000)
 def model_YoungDampingDensity(x, y_obs):
     # Density definition
     rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
@@ -76,20 +77,21 @@ def model_YoungDampingDensity(x, y_obs):
         y = pyro.sample("y", dist.Normal(20*torch.log10(y_values), 0.001), obs=20*torch.log10(y_obs))
     return y
 
+@poutine.scale(scale=1.0/3000)
 def guide(x, y_obs):
     # Density guide
     rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
-    rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
+    rho_std = pyro.param("rho_std", torch.tensor(0.05), constraint=constraints.positive)
     pyro.sample("rho", dist.Normal(rho_mean, rho_std))
 
     # Damping loss factor guide
     eta_mean = pyro.param("eta_mean", dist.LogNormal(0, 1))
-    eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
+    eta_std = pyro.param("eta_std", torch.tensor(0.05), constraint=constraints.positive)
     pyro.sample("eta", dist.Normal(eta_mean, eta_std))
 
     # Damping loss factor guide
     E_mean = pyro.param("E_mean", dist.Normal(0, 1))
-    E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
+    E_std = pyro.param("E_std", torch.tensor(0.05), constraint=constraints.positive)
     pyro.sample("E", dist.Normal(E_mean, E_std))
     
 
@@ -111,14 +113,18 @@ def normalization(rho, eta, E, rho_var, eta_var, E_var):
 
     return rho_norm, eta_norm, E_norm
 
-def train(freq, data, model, guide, lr=0.00001, n_steps=1000):
+def train(freq, data, model, guide, lr=0.001, n_steps=5000):
     pyro.clear_param_store()
     adam_params = {"lr": lr, 
-                   "betas": (0.9, 0.999),
+                   "betas": (0.95, 0.999),
                    "eps": 1e-08}
+    initial_lr = 0.001
+    gamma = 100  # final learning rate will be gamma * initial_lr
+    lrd = gamma ** (2 / n_steps)
+    optim = pyro.optim.ClippedAdam({'lr': initial_lr, 'lrd': lrd})
     adam = pyro.optim.Adam(adam_params)
     
-    svi = SVI(model, guide, adam, loss=Trace_ELBO())
+    svi = SVI(model, guide, optim, loss=Trace_ELBO())
 
     losses = []
     for step in tqdm(range(n_steps)):
@@ -127,13 +133,7 @@ def train(freq, data, model, guide, lr=0.00001, n_steps=1000):
             losses.append(loss)
             #print(".", end="")
             #print('[iter {}]  loss: {:.4f}'.format(step, loss))
-    plt.figure(10)
-    plt.plot(np.linspace(0, n_steps, len(losses)), losses, "*-")
-    plt.yscale("log")
-    plt.xlabel("iterations ")
-    plt.ylabel(" Error estimation")
-    plt.savefig("./figuresResults/ErrorElboNO"+str(lr).split(".")[-1]+"_"+str(n_steps)+"_all.png")
-    return lr, n_steps
+    return lr, n_steps, losses
 
 if __name__ == "__main__":
     files = ["centerFreqResponse"]#, "center2FreqResponse", "randomFreqResponse"]
@@ -144,12 +144,12 @@ if __name__ == "__main__":
         mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
         peaks = utils.resonances(mobility)
         Y_exp = mobility#[peaks]
-        #freq = torch.tensor(experiment["freq"][peaks].values) # Freq values(x axis) converted to torch
+        freq = torch.tensor(experiment["freq"][peaks].values) # Freq values(x axis) converted to torch
         freq = torch.tensor(experiment["freq"].values) # Freq values(x axis) converted to torch
     #Y_exp = pd.read_csv("./BayesianVibrationsModeling/Data/bend/"+file+".csv")[20:]
     Y_exp = torch.tensor(Y_exp)
 
-    [lr, n_steps] = train(freq, Y_exp, model_YoungDampingDensity, guide)
+    [lr, n_steps, losses] = train(freq, Y_exp, model_YoungDampingDensity, guide)
     E_est = pyro.param("E_mean").item()
     eta_est = pyro.param("eta_mean").item()
     rho_est = pyro.param("rho_mean").item()
@@ -163,6 +163,13 @@ if __name__ == "__main__":
     print("Our MAP estimate of eta is {:.3f}".format((eta_est)))
     print("Our MAP estimate of rho is {:.3f}".format((rho_est)))
 
+    plt.figure(10)
+    plt.plot(np.linspace(0, n_steps, len(losses)), np.log10(losses), "*-")
+    plt.yscale("log")
+    plt.xlabel("iterations ")
+    plt.ylabel(" Error estimation")
+    plt.savefig("./figuresResults/ErrorElboNO"+str(lr).split(".")[-1]+"_"+str(n_steps)+"_all_decay.png")
+    
     plt.figure(11)
     mob_dB = 20*np.log10(mobility)
     plt.plot(experiment["freq"].values, mob_dB, label="experiment")
@@ -173,7 +180,7 @@ if __name__ == "__main__":
     plt.xlabel("Frequency / Hz")
     plt.ylabel("Mobility / dB")
     plt.ylabel(" Error estimation")
-    plt.savefig("./figuresResults/mobNO_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all.png")
+    plt.savefig("./figuresResults/mobNO_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all_decay.png")
 
 
     E_theo=10.0e10
@@ -181,7 +188,7 @@ if __name__ == "__main__":
     rho_theo=8050.0
     rho_var_init = 250
     eta_mean=0.00505
-    eta_var_init = 0.002
+    eta_var_init = 0.006
     
     # ETA DISTRIBUTION PLOT
     plt.figure(12)
@@ -197,7 +204,7 @@ if __name__ == "__main__":
     plt.plot(x, stats.norm.pdf(x, eta_est, eta_var_init*eta_std), label="posterior")
     plt.xlabel("Damping loss factors")
     plt.legend()
-    plt.savefig("./figuresResults/ETA_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all.png")
+    plt.savefig("./figuresResults/ETA_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all_decay.png")
 
     # RHO DISTRIBUTION PLOT
     plt.figure(13)
@@ -213,7 +220,7 @@ if __name__ == "__main__":
     plt.plot(x, stats.norm.pdf(x, rho_est, rho_var_init*rho_std), label="posterior")
     plt.xlabel("Density / Kg/m^3")
     plt.legend()
-    plt.savefig("./figuresResults/RHO_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all.png")
+    plt.savefig("./figuresResults/RHO_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all_decay.png")
 
     # E DISTRIBUTION PLOT
     plt.figure(14)
@@ -230,5 +237,6 @@ if __name__ == "__main__":
     plt.plot(x, stats.norm.pdf(x, E_est, E_var_init*E_std), label="posterior")
     plt.xlabel("Young's modulus / Pa")
     plt.legend()
-    plt.savefig("./figuresResults/E_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all.png")
+    plt.savefig("./figuresResults/E_"+str(lr).split(".")[-1]+"_"+str(n_steps)+"LAST_all_decay.png")
     plt.show()
+    print("finish")

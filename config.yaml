@@ -1,0 +1,53 @@
+# Files
+files: 
+  comsolModels : 
+    training : "./comsol/beam.mph" # Model containing data points close to the resonance frequencies
+    test     : "./comsol/beamTest.mph" # Model containing the full frequency range (testing purposes)
+
+  dataFile : "./Data/bend/centerFreqResponse.csv"
+
+comsol:
+  studyName  : "Study 3"
+  evaluation : "comp1.point1"
+
+# parameter data
+# Used the limit values for each parameter, the mean and var of every param generate 
+# gaussian distributions whhich, after normalization, is a mean = 0, var = 3 gaussian
+parameters: 
+  young : 
+    init: 
+      mean : 10.0e+10
+      var  : 5.0e+9
+    lims:
+      low  : 10.e+9
+      high : 10.e+11
+  eta : 
+    init: 
+      mean : 0.00505
+      var  : 0.002
+    lims:
+      low  : 0.001 
+      high : 0.5
+  rho : 
+    init: 
+      mean : 8050
+      var  : 250
+    lims:
+      low  : 7300
+      high : 8800
+  
+# The values selected above, where chosen based on data study where the goal was to obtain
+# a density distribution containing the possible values for each paramenter acording to 
+# material properties
+
+# bayesian inference parameters
+bayesian:
+  optimType    : "ClippedAdam" # Adam or ClippedAdam
+  learningRate : 0.01
+  n_steps      : 250
+  # for ClippedAdam
+  gamma : 0      # if no-zero, 
+  # for Adam
+  betas : [ 0.95, 0.999]
+  eps   : 1.e-8
+
