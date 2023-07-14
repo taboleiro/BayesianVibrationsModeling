@@ -2,13 +2,13 @@
 files: 
   comsolModels : 
     training : "./comsol/beam.mph" # Model containing data points close to the resonance frequencies
-    test     : "./comsol/beamTest.mph" # Model containing the full frequency range (testing purposes)
+    test     : "./comsol/beam.mph" # Model containing the full frequency range (testing purposes)
 
   dataFile : "./Data/bend/centerFreqResponse.csv"
 
 comsol:
   studyName  : "Study 3"
-  evaluation : "comp1.point2"
+  evaluation : "comp1.point1"
 
 # parameter data
 # Used the limit values for each parameter, the mean and var of every param generate 
@@ -16,7 +16,7 @@ comsol:
 parameters: 
   young : 
     init: 
-      mean : 10.0e+10
+      mean : 9.8e+10
       var  : 5.0e+9
     lims:
       low  : 10.e+9
@@ -41,12 +41,12 @@ parameters:
 # material properties
 
 # bayesian inference parameters
-bayesian:
+bayesian: 
   optimType    : "ClippedAdam" # Adam or ClippedAdam
-  learningRate : 2
-  n_steps      : 200
+  learningRate : 0.1
+  n_steps      : 2000
   # for ClippedAdam
-  gamma : 0.0001      # if no-zero, 
+  gamma : 0.001     # if no-zero, 
   # for Adam
   betas : [ 0.95, 0.999]
   eps   : 1.e-8

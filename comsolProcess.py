@@ -58,10 +58,13 @@ class ComsolProcess(object):
         SVIconfig = config["bayesian"]
         self.n_steps = SVIconfig["n_steps"]
         if SVIconfig["optimType"] == "ClippedAdam":
-            initial_lr = SVIconfig["learningRate"]
-            gamma = SVIconfig["gamma"]  # final learning rate will be gamma * initial_lr
-            lrd = gamma ** (1 / SVIconfig["n_steps"])
-            self.optim = pyro.optim.ClippedAdam({'lr': initial_lr, 'lrd': lrd})
+            adam_params = {
+                "lr": .1, #0.001,
+                "betas": (0.96, 0.999),
+                "clip_norm": 20.0,
+                "lrd": 0.99996,
+                "weight_decay": 2.0}
+            self.optim = pyro.optim.ClippedAdam(adam_params)
 
         elif SVIconfig["optimType"] == "adam":
             adam_params = {"lr": SVIconfig["learningRate"], 
@@ -76,7 +79,7 @@ class ComsolProcess(object):
         #freqVal = utils.createComsolVector("lin", self.freqValues, param="step", display=False)
         #freqVal = [105.0, 105.5, 106.0, 106.5, 107.0, 107.5, 108.0, 108.5, 109.0, 109.5, 110.0, 110.5, 111.0, 111.5, 112.0, 112.5, 113.0, 113.5, 114.0, 114.5, 115.0, 632.0, 632.5, 633.0, 633.5, 634.0, 634.5, 635.0, 635.5, 636.0, 636.5, 637.0, 637.5, 638.0, 638.5, 639.0, 639.5, 640.0, 640.5, 641.0, 641.5, 642.0, 1585.5, 1586.0, 1586.5, 1587.0, 1587.5, 1588.0, 1588.5, 1589.0, 1589.5, 1590.0, 1590.5, 1591.0, 1591.5, 1592.0, 1592.5, 1593.0, 1593.5, 1594.0, 1594.5, 1595.0, 1595.5]
         freqVal = np.concatenate([np.arange(2730, 2770), np.arange(3190, 3210), np.arange(5370, 5400)])
-        #freqVal = np.array(freqVal)
+        freqVal = np.array(self.freqValues)
         # Reading input files
         Y_exp = np.array([])
         if type(self.inputFiles) is str:
@@ -91,23 +94,31 @@ class ComsolProcess(object):
         # BAYESIAN INFERENCE PROCESS
         # The experimental data has a resolution of 0.5 Hz. The values selected are integers
         # so the position of the freq. values in the array will be x*2
-        #input_x = torch.tensor(freq[(freqVal*2).astype(int)])
-        input_x = torch.tensor(freq[(freqVal).astype(int)])
+        input_x = torch.tensor(freq[(freqVal*2).astype(int)])
+        #input_x = torch.tensor(freq[(freqVal).astype(int)])
 
-        #y_obs = torch.tensor(20*np.log10(Y_exp[(freqVal*2).astype(int)])) # Suppose this was the vector of observed y's
-        y_obs = torch.tensor(20*np.log10(Y_exp[(freqVal).astype(int)])) # Suppose this was the vector of observed y's
+        y_obs = torch.tensor(20*np.log10(Y_exp[(freqVal*2).astype(int)])) # Suppose this was the vector of observed y's
+        #y_obs = torch.tensor(20*np.log10(Y_exp[(freqVal).astype(int)])) # Suppose this was the vector of observed y's
 
         pyro.clear_param_store()        
         svi = SVI(self.model, self.guide, self.optim, loss=TraceMeanField_ELBO())
 
-        losses = []
-        for step in tqdm(range(self.n_steps)):
+        self.losses = np.zeros(self.n_steps)
+        self.E_values = np.zeros(self.n_steps)
+        self.eta_values = np.zeros(self.n_steps)
+        self.rho_values = np.zeros(self.n_steps)
+        self.step = 0
+        for step in tqdm(range(self.n_steps)): 
+            self.step = step    
             loss = svi.step(input_x, y_obs)
-            losses.append(loss)
+            print("---------------")
+            print(self.E_values[step])
+            print("---------------")
+            self.losses[step] = loss
                 #print(".", end="")
                 #print('[iter {}]  loss: {:.4f}'.format(step, loss))
 
-        self.outputPlots(losses, experiment)
+        self.outputPlots(experiment)
         
         return
 
@@ -115,79 +126,73 @@ class ComsolProcess(object):
         # Update parameters
         modelComsol.parameter('Youngs', str(E)+' [Pa]')
         modelComsol.parameter('density', str(rho)+' [kg/m^3]')
-        modelComsol.parameter('damping', str(eta)+' [Pa]')
+        modelComsol.parameter('damping', str(eta))
 
         # Solving comsol FEM
+        print(self.modelComsol.parameters())
         self.modelComsol.solve(self.studyName)
         comsolResults = 20*torch.log10(torch.tensor(abs(self.modelComsol.evaluate(self.evalPoint))))
 
         return comsolResults
 
 
-    def normalization(self, rho, eta, E, rho_var, eta_var, E_var):
+    def normalization(self, rho, eta, E, rho_std, eta_std, E_std):
 
-        rho_var = rho_var*self.rho_var_init
-        eta_var = eta_var*self.eta_var_init
-        E_var = E_var*self.E_var_init
-
-        rho_norm = rho*rho_var + self.rho_mean
-        eta_norm = eta*eta_var + self.eta_mean
-        E_norm = E*E_var + self.E_mean
+        rho_norm = rho*self.rho_var_init + self.rho_mean
+        eta_norm = eta*self.eta_var_init + self.eta_mean
+        E_norm = E*self.E_var_init + self.E_mean
 
         return rho_norm, eta_norm, E_norm
-
-    @poutine.scale(scale=1.0/63)  
+        
+    @poutine.scale(scale=1.0/100)
     def model(self, x, y_obs):
         # Density definition
-        rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
-        rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
+        rho_mean = pyro.param("rho_mean", torch.tensor(0.))
+        rho_std = pyro.param("rho_std", torch.tensor(3.), constraint=constraints.positive)
         rho = pyro.sample("rho", dist.Normal(rho_mean, rho_std))
         # Damping loss factor definition
-        eta_mean = pyro.param("eta_mean", dist.Normal(0, 1))
-        eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
+        eta_mean = pyro.param("eta_mean", torch.tensor(0.))
+        eta_std = pyro.param("eta_std", torch.tensor(3.), constraint=constraints.positive)
         eta = pyro.sample("eta", dist.Normal(eta_mean, eta_std))
         # Young's modulus definition
-        E_mean = pyro.param("E_mean", dist.Normal(0, 1))
-        E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
+        E_mean = pyro.param("E_mean", torch.tensor(0.))
+        E_std = pyro.param("E_std", torch.tensor(3.), constraint=constraints.positive)
         E = pyro.sample("E", dist.Normal(E_mean, E_std))
         
-        rho, eta, E = self.normalization(rho, eta, E, rho_std, eta_std, E_std)
-
-        with pyro.plate("data", len(y_obs)):            
-            comsolResults = self.solveComsol(self.modelComsol, E=E.detach().numpy(), rho=rho.detach().numpy(), eta=eta.detach().numpy())
-            y = pyro.sample("y", dist.Normal(comsolResults, 0.001), obs=y_obs)
+        [rho, eta, E] = self.normalization(rho, eta, E, rho_std, eta_std, E_std)
+        y_values = self.solveComsol(self.modelComsol, E=E.detach().numpy(), rho=rho.detach().numpy(), eta=eta.detach().numpy())
+        with pyro.plate("data", len(y_obs)):
+            y = pyro.sample("y", dist.Normal(y_values, 0.001), obs=y_obs)
         return y
 
-
-    @poutine.scale(scale=1.0/63)
+    @poutine.scale(scale=1.0/100)
     def guide(self, x, y_obs):
         # Density guide
-        rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
-        rho_std = pyro.param("rho_std", torch.tensor(0.05), constraint=constraints.positive)
-        pyro.sample("rho", dist.Normal(rho_mean, rho_std))
+        rho_mean_guide = pyro.param("rho_mean_guide", torch.tensor(0.))
+        rho_std_guide = pyro.param("rho_std_guide", torch.tensor(0.05), constraint=constraints.positive)
+        pyro.sample("rho", dist.Normal(rho_mean_guide, rho_std_guide))
+        # Damping loss factor guide
+        eta_mean_guide = pyro.param("eta_mean_guide", torch.tensor(0.))
+        eta_std_guide = pyro.param("eta_std_guide", torch.tensor(0.05), constraint=constraints.positive)
+        pyro.sample("eta", dist.Normal(eta_mean_guide, eta_std_guide))
 
         # Damping loss factor guide
-        eta_mean = pyro.param("eta_mean", dist.LogNormal(0, 1))
-        eta_std = pyro.param("eta_std", torch.tensor(0.05), constraint=constraints.positive)
-        pyro.sample("eta", dist.Normal(eta_mean, eta_std))
+        E_mean_guide = pyro.param("E_mean_guide", torch.tensor(0.))
+        E_std_guide = pyro.param("E_std_guide", torch.tensor(0.05), constraint=constraints.positive)
+        pyro.sample("E", dist.Normal(E_mean_guide, E_std_guide))
+    
+    def outputPlots(self, experiment):
+        E_est = pyro.param("E_mean_guide").item()
+        E_std = pyro.param("E_std_guide").item()
 
-        # Damping loss factor guide
-        E_mean = pyro.param("E_mean", dist.Normal(0, 1))
-        E_std = pyro.param("E_std", torch.tensor(0.05), constraint=constraints.positive)
-        pyro.sample("E", dist.Normal(E_mean, E_std))
+        rho_est = pyro.param("rho_mean_guide").item()
+        rho_std = pyro.param("rho_std_guide").item()
 
-    def outputPlots(self, losses, experiment):
-        E_est = pyro.param("E_mean").item()
-        E_std = pyro.param("E_std").item()
-
-        rho_est = pyro.param("rho_mean").item()
-        rho_std = pyro.param("rho_std").item()
-
-        eta_est = pyro.param("eta_mean").item()
-        eta_std = pyro.param("eta_std").item()
+        eta_est = pyro.param("eta_mean_guide").item()
+        eta_std = pyro.param("eta_std_guide").item()
 
         plt.figure(10)
-        plt.plot(np.linspace(0, self.n_steps, len(losses)), np.log10(losses), "*-")
+        plt.plot(np.linspace(0, self.n_steps, len(self.losses)), self.losses, "*-")
         #plt.yscale("log")
         plt.xlabel("iterations ")
         plt.ylabel(" Error estimation")
@@ -261,7 +266,8 @@ if __name__ == "__main__":
  
     configFilePath = "./config.yaml"  
 
-    freqValues = [105.0, 105.5, 106.0, 106.5, 107.0, 107.5, 108.0, 108.5, 109.0, 109.5, 110.0, 110.5, 111.0, 111.5, 112.0, 112.5, 113.0, 113.5, 114.0, 114.5, 115.0, 632.0, 632.5, 633.0, 633.5, 634.0, 634.5, 635.0, 635.5, 636.0, 636.5, 637.0, 637.5, 638.0, 638.5, 639.0, 639.5, 640.0, 640.5, 641.0, 641.5, 642.0, 1585.5, 1586.0, 1586.5, 1587.0, 1587.5, 1588.0, 1588.5, 1589.0, 1589.5, 1590.0, 1590.5, 1591.0, 1591.5, 1592.0, 1592.5, 1593.0, 1593.5, 1594.0, 1594.5, 1595.0, 1595.5]
+    freqValues = [1365, 1365.5, 1366, 1366.5, 1367, 1367.5, 1368, 1368.5, 1369, 1369.5, 1370, 1370.5, 1371, 1371.5, 1372, 1372.5, 1373, 1373.5, 1374, 1374.5, 1375, 1375.5, 1376, 1376.5, 1377, 1377.5, 1378, 1378.5, 1379, 1379.5, 1380, 1380.5, 1381, 1381.5, 1382, 1382.5, 1383, 1383.5, 1384, 1384.5, 1595, 1595.5, 1596, 1596.5, 1597, 1597.5, 1598, 1598.5, 1599, 1599.5, 1600, 1600.5, 1601, 1601.5, 1602, 1602.5, 1603, 1603.5, 1604, 1604.5, 2685, 2685.5, 2686, 2686.5, 2687, 2687.5, 2688, 2688.5, 2689, 2689.5, 2690, 2690.5, 2691, 2691.5, 2692, 2692.5, 2693, 2693.5, 2694, 2694.5, 2695, 2695.5, 2696, 2696.5, 2697, 2697.5, 2698, 2698.5, 2699, 2699.5]
+
     obj = ComsolProcess(configFilePath, freqValues)
     obj.run()
 
