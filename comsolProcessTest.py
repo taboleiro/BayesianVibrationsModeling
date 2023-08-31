@@ -106,10 +106,12 @@ class ComsolProcess(object):
         # The experimental data has a resolution of 0.5 Hz. The values selected are integers
         # so the position of the freq. values in the array will be x*2
         #input_x = freq
-        input_x = torch.tensor(freq[np.logical_and(mobility>0.2, mobility<0.75)])
+        #input_x = torch.tensor(freq[np.logical_and(mobility>0.2, mobility<0.75)])
+        input_x = torch.tensor(freq[mobility>0.1])
 
         #y_obs = torch.tensor(Y_exp) # Suppose this was the vector of observed y's
-        y_obs = torch.tensor(mobility[np.logical_and(mobility>0.2, mobility<0.75)]) # Suppose this was the vector of observed y's
+        #y_obs = torch.tensor(mobility[np.logical_and(mobility>0.2, mobility<0.75)]) # Suppose this was the vector of observed y's
+        y_obs = torch.tensor(mobility[mobility>0.1])
         # the prior information is scaled to the physical values of the parameters
         self.rho_mean_scaled = self.rho_mean
         self.eta_mean_scaled = self.eta_mean
