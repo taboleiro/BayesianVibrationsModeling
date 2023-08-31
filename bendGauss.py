@@ -9,13 +9,14 @@ from torch.distributions import constraints
 import torch.distributions as distTorch
 import matplotlib.pyplot as plt
 import seaborn as sns
+import time
 
 import pickle
 import graphviz
 import utils
 
 class inferenceProcess(object):
-    def __init__(self, n_warmup=100, n_samples=1000, n_chains=1):
+    def __init__(self, n_warmup=1, n_samples=1000, n_chains=1):
         self.beam = {}
         self.freq = []
         self.mobility = []
@@ -128,7 +129,9 @@ class inferenceProcess(object):
         
         nuts_kernel = NUTS(self.model_YoungDampingDensity)
         mcmc = MCMC(nuts_kernel, num_samples=self.n_samples, warmup_steps=self.n_warmup, num_chains=self.n_chains)      
+        start = time.time()
         mcmc.run(input_x, y_obs)
+        processTime = time.time() - start
 
         results = dict()
         results["n_warmup"] = self.n_warmup
@@ -136,6 +139,8 @@ class inferenceProcess(object):
         results["n_chain"] = self.n_chains
         results["samples"] = mcmc.get_samples()
         results["summary"] = mcmc.summary()
+        results["time"] = processTime
+
  
         posterior_samples = mcmc.get_samples()
         E, rho, eta = self.destandarize(posterior_samples["E"], posterior_samples["rho"], posterior_samples["eta"])
@@ -162,7 +167,7 @@ class inferenceProcess(object):
         sns.displot(posterior_samples["rho"])
         plt.xlabel("density values")
         plt.show()
-        with open('./PriorGauss_samples6318_1000_100.pickle', 'wb') as handle:
+        with open('./PriorGauss_samples6318_1000_1.pickle', 'wb') as handle:
             pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
         return
 

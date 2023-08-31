@@ -11,21 +11,24 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 import pickle
+import time
 import graphviz
 import utils
 
 class inferenceProcess(object):
-    def __init__(self, n_warmup=100, n_samples=1000, n_chains=1):
+    def __init__(self, n_warmup=1, n_samples=1000, n_chains=1):
         self.beam = {}
         self.freq = []
         self.mobility = []
 
-        self.E_mean=9.7e10
-        self.E_std =5.0e9
-        self.rho_mean=8000.0
-        self.rho_std =250.0
-        self.eta_mean=0.00505
-        self.eta_std = 0.006
+        self.Ehigh = torch.tensor(12e10)
+        self.Elow = torch.tensor(9e10)
+
+        self.rhohigh = torch.tensor(8.8e3)
+        self.rholow = torch.tensor(7.3e3)
+
+        self.etahigh = torch.tensor(0.01)
+        self.etalow = torch.tensor(0.0001)
 
         self.n_warmup = n_warmup
         self.n_samples = n_samples
@@ -74,10 +77,10 @@ class inferenceProcess(object):
         #map_estimate = pyro.param("E").item()
         #print("Our MAP estimate of the Young's modulus is {:.3f}".format(map_estimate)) 
 
-    def destandarize(self, E_norm, rho_norm, eta_norm):
-        E = E_norm * self.E_std + self.E_mean
-        rho = rho_norm * self.rho_std + self.rho_mean
-        eta = eta_norm * self.eta_std + self.eta_mean
+    def denormalize(self, E_norm, rho_norm, eta_norm):
+        E = E_norm * (self.Ehigh - self.Elow) + self.Elow
+        rho = rho_norm * (self.rhohigh - self.rholow) + self.rholow
+        eta = eta_norm * (self.etahigh - self.etalow) + self.etalow
         return E, rho, eta
 
     def mobilityFuncModel(self, E, rho, eta, freq):
@@ -108,13 +111,13 @@ class inferenceProcess(object):
 
     def model_YoungDampingDensity(self, x, y_obs):
         # Young's modulus definition
-        E_norm = pyro.sample("E", dist.Normal(0., 1.))
+        E_norm = pyro.sample("E", dist.Uniform(0., 1.))
         # Density definition
-        rho_norm = pyro.sample("rho", dist.Normal(0., 1.))
+        rho_norm = pyro.sample("rho", dist.Uniform(0., 1.))
         # Damping loss factor definition
-        eta_norm = pyro.sample("eta", dist.Normal(0., 1.))
+        eta_norm = pyro.sample("eta", dist.Uniform(0., 1.))
 
-        E, rho, eta = self.destandarize(E_norm, rho_norm, eta_norm)
+        E, rho, eta = self.denormalize(E_norm, rho_norm, eta_norm)
         with pyro.plate("data", len(y_obs)):
             y_values = self.mobilityFuncModel(E, rho, eta, x)
             y = pyro.sample("y", dist.Normal(y_values, 0.001), obs=y_obs)
@@ -122,13 +125,18 @@ class inferenceProcess(object):
 
     def train(self):
         pyro.clear_param_store()
-        y_obs = self.Y_exp # Suppose this was the vector of observed y's
-        input_x = self.freq#[0:2000]
+        y_obs = self.Y_exp[np.logical_and(self.Y_exp>0.1, self.Y_exp<0.75)]
+        input_x = self.Y_exp[np.logical_and(self.Y_exp>0.1, self.Y_exp<0.75)]
+
+
         pyro.render_model(self.model_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
         
         nuts_kernel = NUTS(self.model_YoungDampingDensity)
         mcmc = MCMC(nuts_kernel, num_samples=self.n_samples, warmup_steps=self.n_warmup, num_chains=self.n_chains)      
+        start = time.time()
         mcmc.run(input_x, y_obs)
+        processTime = time.time() - start
+
 
         results = dict()
         results["n_warmup"] = self.n_warmup
@@ -136,9 +144,11 @@ class inferenceProcess(object):
         results["n_chain"] = self.n_chains
         results["samples"] = mcmc.get_samples()
         results["summary"] = mcmc.summary()
+        results["time"] = processTime
+
  
         posterior_samples = mcmc.get_samples()
-        E, rho, eta = self.destandarize(posterior_samples["E"], posterior_samples["rho"], posterior_samples["eta"])
+        E, rho, eta = self.denormalize(posterior_samples["E"], posterior_samples["rho"], posterior_samples["eta"])
         E_est = E[np.argmax(E)]
         rho_est = rho[np.argmax(rho)]
         eta_est = eta[np.argmax(eta)]
@@ -146,7 +156,6 @@ class inferenceProcess(object):
         
         results["Y_est"] = self.mobilityFuncModel(E_est, rho_est, eta_est, input_x)
         results["Y_exp"] = self.Y_exp
-
         plt.figure(10)
         plt.plot(self.freq, 20*np.log10(self.Y_exp))
         mob = self.mobilityFuncModel(E_est, rho_est, eta_est, input_x)
@@ -162,8 +171,10 @@ class inferenceProcess(object):
         sns.displot(posterior_samples["rho"])
         plt.xlabel("density values")
         plt.show()
-        with open('./PriorGauss_samples6318_1000_100.pickle', 'wb') as handle:
+        with open('./PriorUniform_samples88_1000_100.pickle', 'wb') as handle:
             pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        return
+
         return
 
 
