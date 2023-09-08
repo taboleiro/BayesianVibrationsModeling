@@ -16,7 +16,7 @@ import graphviz
 import utils
 
 class inferenceProcess(object):
-    def __init__(self, n_warmup=1, n_samples=1000, n_chains=1):
+    def __init__(self, n_warmup=100, n_samples=1000, n_chains=1):
         self.beam = {}
         self.freq = []
         self.mobility = []
@@ -124,6 +124,7 @@ class inferenceProcess(object):
         return y
 
     def train(self):
+        pyro.set_rng_seed(10)
         pyro.clear_param_store()
         y_obs = self.Y_exp # Suppose this was the vector of observed y's
         input_x = self.freq#[0:2000]
@@ -169,7 +170,7 @@ class inferenceProcess(object):
         sns.displot(posterior_samples["rho"])
         plt.xlabel("density values")
         plt.show()
-        with open('./PriorGauss_samples6318_1000_1.pickle', 'wb') as handle:
+        with open('./PriorGauss_samples6318_1000_100.pickle', 'wb') as handle:
             pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
         return
 

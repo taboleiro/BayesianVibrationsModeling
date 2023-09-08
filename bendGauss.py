@@ -10,13 +10,14 @@ import torch.distributions as distTorch
 import matplotlib.pyplot as plt
 import seaborn as sns
 import time
+from scipy.signal import find_peaks
 
 import pickle
 import graphviz
 import utils
 
 class inferenceProcess(object):
-    def __init__(self, n_warmup=1, n_samples=1000, n_chains=1):
+    def __init__(self, n_warmup=100, n_samples=1000, n_chains=1):
         self.beam = {}
         self.freq = []
         self.mobility = []
@@ -108,6 +109,7 @@ class inferenceProcess(object):
         return abs(Y)
 
     def model_YoungDampingDensity(self, x, y_obs):
+
         # Young's modulus definition
         E_norm = pyro.sample("E", dist.Normal(0., 1.))
         # Density definition
@@ -118,13 +120,24 @@ class inferenceProcess(object):
         E, rho, eta = self.destandarize(E_norm, rho_norm, eta_norm)
         with pyro.plate("data", len(y_obs)):
             y_values = self.mobilityFuncModel(E, rho, eta, x)
-            y = pyro.sample("y", dist.Normal(y_values, 0.001), obs=y_obs)
+            y = pyro.sample("y", dist.Normal(20*torch.log10(y_values), 1), obs=20*torch.log10(y_obs))
         return y
 
     def train(self):
         pyro.clear_param_store()
-        y_obs = self.Y_exp # Suppose this was the vector of observed y's
-        input_x = self.freq#[0:2000]
+        pyro.set_rng_seed(10)
+
+        peaks1, _ = find_peaks(self.Y_exp, distance=1000) 
+        peaks2, _ = find_peaks(self.Y_exp*(-1), distance=1700)
+        peaks = np.concatenate((peaks1, peaks2))
+        peaks = peaks[[0, 1, 2, 4, 5, 6,7]]
+
+        res = np.linspace(peaks-np.ones(len(peaks))*20, peaks+np.ones(len(peaks))*20, 51).T
+        res = res.flatten().astype(int)
+        
+        y_obs = self.Y_exp#[self.Y_exp>0.1]
+        input_x = self.freq#[self.Y_exp>0.1]
+        
         pyro.render_model(self.model_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
         
         nuts_kernel = NUTS(self.model_YoungDampingDensity)
@@ -147,29 +160,29 @@ class inferenceProcess(object):
         E_est = E[np.argmax(E)]
         rho_est = rho[np.argmax(rho)]
         eta_est = eta[np.argmax(eta)]
-        results["error"] = torch.sum((self.Y_exp-self.mobilityFuncModel(E_est, rho_est, eta_est, input_x))**2)
-        
-        results["Y_est"] = self.mobilityFuncModel(E_est, rho_est, eta_est, input_x)
+        results["error"] = torch.sum((self.Y_exp-self.mobilityFuncModel(E_est, rho_est, eta_est, self.freq))**2)
+        print(results["error"])
+        print(processTime)
+        results["Y_est"] = self.mobilityFuncModel(E_est, rho_est, eta_est, self.freq)
         results["Y_exp"] = self.Y_exp
 
         plt.figure(10)
         plt.plot(self.freq, 20*np.log10(self.Y_exp))
-        mob = self.mobilityFuncModel(E_est, rho_est, eta_est, input_x)
+        mob = self.mobilityFuncModel(E_est, rho_est, eta_est, self.freq)
         
         plt.plot(self.freq, 20*np.log10(mob))
         plt.xscale("log")
-        plt.show()
 
         sns.displot(posterior_samples["E"])
         plt.xlabel("Young's modulus values")
-        plt.show()
                 
         sns.displot(posterior_samples["rho"])
         plt.xlabel("density values")
-        plt.show()
-        with open('./PriorGauss_samples6318_1000_1.pickle', 'wb') as handle:
+        """
+        with open('./resultsPickle/PriorGauss_samples6318_noSTD.pickle', 'wb') as handle:
             pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
         return
+        """
 
 
 if __name__ == "__main__":

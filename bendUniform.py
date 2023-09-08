@@ -16,7 +16,7 @@ import graphviz
 import utils
 
 class inferenceProcess(object):
-    def __init__(self, n_warmup=1, n_samples=1000, n_chains=1):
+    def __init__(self, n_warmup=0, n_samples=1000, n_chains=1):
         self.beam = {}
         self.freq = []
         self.mobility = []
@@ -124,10 +124,10 @@ class inferenceProcess(object):
         return y
 
     def train(self):
+        pyro.set_rng_seed(10)
         pyro.clear_param_store()
-        y_obs = self.Y_exp[np.logical_and(self.Y_exp>0.1, self.Y_exp<0.75)]
-        input_x = self.Y_exp[np.logical_and(self.Y_exp>0.1, self.Y_exp<0.75)]
-
+        y_obs = self.Y_exp#[self.Y_exp>0.1]
+        input_x = self.freq#[self.Y_exp>0.1]
 
         pyro.render_model(self.model_YoungDampingDensity, model_args=(input_x, y_obs), render_distributions=True)
         
@@ -152,29 +152,26 @@ class inferenceProcess(object):
         E_est = E[np.argmax(E)]
         rho_est = rho[np.argmax(rho)]
         eta_est = eta[np.argmax(eta)]
-        results["error"] = torch.sum((self.Y_exp-self.mobilityFuncModel(E_est, rho_est, eta_est, input_x))**2)
+        results["error"] = torch.sum((self.Y_exp-self.mobilityFuncModel(E_est, rho_est, eta_est, self.freq))**2)
         
-        results["Y_est"] = self.mobilityFuncModel(E_est, rho_est, eta_est, input_x)
+        results["Y_est"] = self.mobilityFuncModel(E_est, rho_est, eta_est, self.freq)
         results["Y_exp"] = self.Y_exp
+
         plt.figure(10)
         plt.plot(self.freq, 20*np.log10(self.Y_exp))
-        mob = self.mobilityFuncModel(E_est, rho_est, eta_est, input_x)
+        mob = self.mobilityFuncModel(E_est, rho_est, eta_est, self.freq)
         
         plt.plot(self.freq, 20*np.log10(mob))
         plt.xscale("log")
-        plt.show()
 
         sns.displot(posterior_samples["E"])
         plt.xlabel("Young's modulus values")
-        plt.show()
                 
         sns.displot(posterior_samples["rho"])
         plt.xlabel("density values")
-        plt.show()
-        with open('./PriorUniform_samples88_1000_100.pickle', 'wb') as handle:
+        with open('./resultsPickle/PriorUniform_samples6318_1000_0_chain0.pickle', 'wb') as handle:
             pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        return
-
+        plt.show()
         return
 
 
