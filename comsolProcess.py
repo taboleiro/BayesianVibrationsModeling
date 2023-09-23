@@ -1,169 +1,185 @@
-import mph
-import matplotlib.pyplot as plt
-
-import pyro
 import numpy as np
 import pandas as pd
+from statistics import mean, stdev
+import mph
+
 import pyro
 import pyro.distributions as dist
-from pyro.infer import SVI, Trace_ELBO, MCMC, NUTS, HMC
+import pyro.poutine as poutine
+import scipy.io as sio
+from pyro.poutine.runtime import effectful
 
 import torch
 from torch.distributions import constraints
+from torch.autograd import Variable
+import yaml
+from pymcmcstat.MCMC  import MCMC 
+
+import pickle
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 import time 
 
+from scipy import stats
 import graphviz
-import utils
 from tqdm import tqdm
 
 class ComsolProcess(object):
-    def __init__(self, comsolModelPath, inputFiles, freqValues):
+    def __init__(self, configFile):
         # initializing variables
-        self.inputFiles = inputFiles
-        self.freqValues = freqValues
-        self.E_theo = 10e10
-        self.rho_theo = 8976
-        self.eta_theo = 0.01
+        with open(configFile) as f:
+            config = yaml.safe_load(f) 
+        # initializing variables
 
-        self.Ehigh = 10e11
-        self.Elow = 10e9
+        self.inputFiles = config["files"]["dataFile"]
+        if len(self.inputFiles) > 1:
+            self.data = sio.loadmat(self.inputFiles[0])
+            self.ref = sio.loadmat(self.inputFiles[1])
+        else:
+            self.data = pd.read_csv(self.inputFiles)
 
-        self.rhohigh = 8800
-        self.rholow = 7300
+        self.freqValues = config["freqValues"]
+        configParam = config["parameters"]
+        self.E_mean = configParam["young"]["init"]["mean"]
+        self.E_std_init = configParam["young"]["init"]["var"]
 
-        self.etahigh = 0.5
-        self.etalow = 0.001  
+        self.rho_mean = configParam["rho"]["init"]["mean"]
+        self.rho_std_init = configParam["rho"]["init"]["var"]
 
-        
-        self.E_mean=10.0e10
-        self.E_var_init = 5e9
-        self.rho_mean=8050.0
-        self.rho_var_init = 250
-        self.eta_mean=0.00505
-        self.eta_var_init = 0.002 
+        self.eta_mean = configParam["eta"]["init"]["mean"]
+        self.eta_std_init = configParam["eta"]["init"]["var"]
+
+        # Starting comsol process
+        comsolFilePath = config["files"]["comsolModels"]
+        self.studyName = config["comsol"]["studyName"]
+        self.evalPoint = config["comsol"]["evaluation"]
         # Starting comsol process
         client = mph.start()
-        self.model = client.load(comsolModelPath)
+        self.model = client.load(comsolFilePath["test"])
+        self.comsolModelFullRange = client.load(comsolFilePath["training"])
+        self.error = np.array([])
 
 
-    def updateParams(self, model, E=1, rho=1, eta=1):#, freq=10):
-        model.parameter('Youngs', str(E)+' [Pa]')
-        model.parameter('density', str(rho)+' [kg/m^3]')
-        model.parameter('damping', str(eta)+' [Pa]')
-        #model.parameter('freq', str(freq)+' [Hz]')
+    def solveComsol(self, modelComsol, param):#, freq=10):
+        
+        # Update parameters
+        E, rho, eta = param
+        rho, eta, E = self.normalization(rho, eta, E)
+        modelComsol.parameter('youngs', str(E)+' [Pa]')
+        modelComsol.parameter('density', str(rho)+' [kg/m^3]')
+        modelComsol.parameter('eta', str(eta))
 
 
-    def normalization(self, rho, eta, E, rho_var, eta_var, E_var):
+        # Solving comsol FEM
+        modelComsol.solve("Study 1")
+        #comsolResults1 = torch.tensor(modelComsol.evaluate("comp1.point2"))
+        meas = modelComsol.evaluate("comp1.point2")
+        ref = modelComsol.evaluate("comp1.point1")
+        comsolResults = meas/ref
+        return abs(comsolResults)
 
-        rho_var = rho_var*self.rho_var_init
-        eta_var = eta_var*self.eta_var_init
-        E_var = E_var*self.E_var_init
+    def normalization(self, rho, eta, E):
 
-        rho_norm = rho*rho_var + self.rho_mean
-        eta_norm = eta*eta_var + self.eta_mean
-        E_norm = E*E_var + self.E_theo
+        rho_norm = rho*self.rho_std_init + self.rho_mean
+        eta_norm = eta*self.eta_std_init + self.eta_mean
+        E_norm = E*self.E_std_init + self.E_mean
 
         return rho_norm, eta_norm, E_norm
 
-    def model_YoungDampingDensity(self, x, y_obs):
-        # Density definition
-        rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
-        rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
-        rho = pyro.sample("rho", dist.Normal(rho_mean, rho_std))
-        # Damping loss factor definition
-        eta_mean = pyro.param("eta_mean", dist.Normal(0, 1))
-        eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
-        eta = pyro.sample("eta", dist.Normal(eta_mean, eta_std))
-        # Young's modulus definition
-        E_mean = pyro.param("E_mean", dist.Normal(0, 1))
-        E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
-        E = pyro.sample("E", dist.Normal(E_mean, E_std))
+        # Define sum of squares function
+    def ssfun(self, q, data):
+        y = data.ydata[0].T
+        y = y[0]
+        # Evaluate model
+        ymodel = self.solveComsol(self.model, q)
+        res = ymodel - y
+        self.error = np.append(self.error, (res ** 2).sum(axis=0))
+        return (res ** 2).sum(axis=0)
         
-        rho, eta, E = self.normalization(rho, eta, E, rho_std, eta_std, E_std)
-
-        with pyro.plate("data", len(y_obs)):            
-            #updateParam(model, young=E.detach().numpy(), rho=rho.detach().numpy(), eta=eta.detach().numpy(), freq=x[i])
-            self.updateParams(self.model, young=E.detach().numpy(), rho=rho.detach().numpy(), eta=eta.detach().numpy())
-            self.model.solve("Study 3")
-            comsolResults = abs(self.model.evaluate('comp1.point1'))
-            y = pyro.sample("y", dist.Normal(20*torch.log10(comsolResults), 0.001), obs=20*torch.log10(y_obs))
-        return y
-
-    def guide(self, x, y_obs):
-        # Density guide
-        rho_mean = pyro.param("rho_mean", dist.Normal(0, 1))
-        rho_std = pyro.param("rho_std", torch.tensor(1), constraint=constraints.positive)
-        pyro.sample("rho", dist.Normal(rho_mean, rho_std))
-
-        # Damping loss factor guide
-        eta_mean = pyro.param("eta_mean", dist.LogNormal(0, 1))
-        eta_std = pyro.param("eta_std", torch.tensor(1), constraint=constraints.positive)
-        pyro.sample("eta", dist.Normal(eta_mean, eta_std))
-
-        # Damping loss factor guide
-        E_mean = pyro.param("E_mean", dist.Normal(0, 1))
-        E_std = pyro.param("E_std", torch.tensor(1), constraint=constraints.positive)
-        pyro.sample("E", dist.Normal(E_mean, E_std))
-
-
-    def run(self, freq, data, model, guide, lr=0.00001, n_steps=1000):
-
-        #freqVal = utils.createComsolVector("lin", self.freqValues, param="step", display=False)
-        freqVal = [115.0, 115.5, 116.0, 116.5, 117.0, 117.5, 118.0, 118.5, 119.0, 119.5, 120.0, 120.5, 121.0, 121.5, 122.0, 122.5, 123.0, 123.5, 124.0, 124.5, 642.0, 642.5, 643.0, 643.5, 644.0, 644.5, 645.0, 645.5, 646.0, 646.5, 647.0, 647.5, 648.0, 648.5, 649.0, 649.5, 650.0, 650.5, 651.0, 651.5, 1595.5, 1596.0, 1596.5, 1597.0, 1597.5, 1598.0, 1598.5, 1599.0, 1599.5, 1600.0, 1600.5, 1601.0, 1601.5, 1602.0, 1602.5, 1603.0, 1603.5, 1604.0, 1604.5, 1605.0, 2974.5, 2975.0, 2975.5, 2976.0, 2976.5, 2977.0, 2977.5, 2978.0, 2978.5, 2979.0, 2979.5, 2980.0, 2980.5, 2981.0, 2981.5, 2982.0, 2982.5, 2983.0, 2983.5, 2984.0]
-        freqVal = np.array(freqVal)
+    def run(self):
         # Reading input files
-        Y_exp = np.array([])
-        for file in self.inputFiles:
-            experiment = pd.read_csv("./Data/bend/"+file+".csv")
-            # Mobility value calculated from input data and converted to torch
-            mobility = abs(experiment["force"].values + 1j*experiment["velocity"].values)
-            Y_exp = np.append(Y_exp, abs(mobility))
-            freq = torch.tensor(experiment["freq"].values) # Freq values(x axis) converted to torch
-
+        expRef = self.ref
+        expMeas = self.data
+        tf_exp = expMeas["y_FRF_vel"][1] / expRef["y_FRF_vel"][0]
+        tf_exp_dB = 20*np.log10(abs(tf_exp))
+        # Mobility value calculated from input data and converted to torch
+        freq = expMeas["x_FRF_vel"][1].T# Freq values(x axis) converted to torch
         
-        
+        self.freqValues = np.array(self.freqValues)
         # BAYESIAN INFERENCE PROCESS
         # The experimental data has a resolution of 0.5 Hz. The values selected are integers
         # so the position of the freq. values in the array will be x*2
-        input_x = torch.tensor(freq[(freqVal*2).astype(int)])
-        y_obs = torch.tensor(Y_exp[(freqVal*2).astype(int)]) # Suppose this was the vector of observed y's
+        input_x = freq[(self.freqValues*2).astype(int)]
+        y_obs = tf_exp[(self.freqValues*2).astype(int)] # Suppose this was the vector of observed y's
 
-        pyro.clear_param_store()
-        adam_params = {"lr": lr, 
-                        "betas": (0.9, 0.999),
-                        "eps": 1e-08}
-        adam = pyro.optim.Adam(adam_params)
+        mcstat = MCMC()
+        mcstat.data.add_data_set(input_x, y_obs)
+        mcstat.model_settings.define_model_settings(
+            sos_function=self.ssfun)
+        # Define simulation options
+        mcstat.simulation_options.define_simulation_options(nsimu=100) # No. of MCMC simulations
+        # Add model parameters
+        mcstat.parameters.add_model_parameter(
+            name='E',
+            theta0=0., # initial value 
+            minimum=-1.5, # lower limit 
+            maximum=1.5)
+        mcstat.parameters.add_model_parameter(
+            name='rho',
+            theta0=0., # initial value 
+            minimum=-1.5, # lower limit 
+            maximum=1.5) # upper limit
+        mcstat.parameters.add_model_parameter(
+            name='eta',
+            theta0=0., # initial value 
+            minimum=-1.5, # lower limit 
+            maximum=1.5)
+        # Run simulation
+        start = time.time()
+        mcstat.run_simulation()
+        timeConsumed = time.time() - start
+        results = mcstat.simulation_results.results
+        chain = results['chain'] 
+        names = results['names']
+        # generate mcmc plots
+        mcpl = mcstat.mcmcplot # initialize plotting methods
+        mcpl.plot_chain_panel(chain[:10], names[:10])
 
-        svi = SVI(model, guide, adam, loss=Trace_ELBO())
+        results = mcstat.simulation_results.results 
+        chain = results['chain'].copy()
+        burnin = 0 #int(chain.shape[0]/2)
+        # display chain statistics 
+        mcstat.chainstats(chain[burnin:, :], results)
+        
+        mode_E = stats.mode(chain[:,0], keepdims=True)[0][0]
+        mode_rho = stats.mode(chain[:,1], keepdims=True)[0][0]
+        mode_eta = stats.mode(chain[:,2], keepdims=True)[0][0]
 
-        losses = []
-        for step in tqdm(range(n_steps)):
-            loss = svi.step(freq, data)
-            if step % 50 == 0:
-                losses.append(loss)
-                #print(".", end="")
-                #print('[iter {}]  loss: {:.4f}'.format(step, loss))
-        plt.figure(10)
-        plt.plot(np.linspace(0, n_steps, len(losses)), losses, "*-")
-        plt.yscale("log")
-        plt.xlabel("iterations ")
-        plt.ylabel(" Error estimation")
-        plt.savefig("./figuresResults/ErrorElboNO"+str(lr).split(".")[-1]+"_"+str(n_steps)+"_all.png")
-        return lr, n_steps
+        comsolResult = self.solveComsol(self.comsolModelFullRange, [mode_E, mode_rho, mode_eta])
+        
+        results = {"vel_est": comsolResult,
+           "E_est": mode_E,  
+           "E_dist": chain[:, 0],
+           "rho_est": mode_rho,  
+           "rho_dist": chain[:, 1],
+           "eta_est": mode_eta,
+           "eta_dist": chain[:, 2],
+           "completedResults": mcstat.simulation_results.results,
+           "error": self.error,
+           "time": timeConsumed}
+        print(results)
+        return results
 
 if __name__ == "__main__":
- 
-    files = ["centerFreqResponse"]#, "center2FreqResponse", "randomFreqResponse"]
-    files = ["centerFreqResponse"]#, "center2FreqResponse", "randomFreqResponse"]
-    freqValues = [[117.5, 122.5, 0.5],\
-                  [645.5, 650.5, 0.5],\
-                  [1597.5, 1600.5, 0.5],\
-                  [2977.5, 2981.5, 0.5]] 
-    freqValues = [[60, 600, 1]]
-    obj = ComsolProcess("comsol/beam.mph", files, freqValues)
+    import pickle
+
+    configFilePath = "./configTest.yaml" 
+    obj = ComsolProcess(configFilePath)
+    results = obj.run()
+    with open('../resultsTest.pickle', 'wb') as handle:
+        pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
 
 
     

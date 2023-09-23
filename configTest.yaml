@@ -1,14 +1,16 @@
 # Files
 files: 
   comsolModels : 
-    training : "./comsol/beam.mph" # Model containing data points close to the resonance frequencies
-    test     : "./comsol/beam.mph" # Model containing the full frequency range (testing purposes)
+    training : "./comsol/curveBeam.mph" # Model containing data points close to the resonance frequencies
+    test     : "./comsol/curveBeam.mph" # Model containing the full frequency range (testing purposes)
 
-  dataFile : "./Data/bend/centerFreqResponse.csv"
-
+  dataFile : ["./Data/laser/references/scanCurveBeamCornerMiddleLimit.mat", "./Data/laser/references/CurveBeamRefCenter.mat"]
+#"./Data/bend/centerFreqResponse.csv"
 comsol:
-  studyName  : "Study 3"
-  evaluation : "comp1.point1"
+  studyName  : "Study 1"
+  evaluation : "comp1.point2"
+
+freqValues: [133.5,  134. ,  134.5,  135. ,  135.5,  136. ]
 
 # parameter data
 # Used the limit values for each parameter, the mean and var of every param generate 
