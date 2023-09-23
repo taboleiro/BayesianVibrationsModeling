@@ -16,7 +16,7 @@ import yaml
 from pymcmcstat.MCMC  import MCMC 
 
 import pickle
-
+import sys
 import matplotlib.pyplot as plt
 import seaborn as sns
 import time 
@@ -172,8 +172,7 @@ class ComsolProcess(object):
         return results
 
 if __name__ == "__main__":
-    import pickle
-
+    configFilePath = sys.argv[1]
     configFilePath = "./configTest.yaml" 
     obj = ComsolProcess(configFilePath)
     results = obj.run()
